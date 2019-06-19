@@ -293,14 +293,14 @@ template <typename DerivedClass> struct cmd_dispatcher_base {
 
     static void fire_done_message(endpoint_ptr const& endpoint_ref, const char* cmd, osc::int32 index) {
         if (endpoint_ref) {
-            DerivedClass::fire_io_callback(
+            DerivedClass::fire_system_callback(
                 [=, endpoint = endpoint_ptr(endpoint_ref)]() { send_done_message(endpoint, cmd, index); });
         }
     }
 
     static void fire_message(endpoint_ptr const& endpoint_ref, movable_array<char>&& message) {
         if (endpoint_ref) {
-            DerivedClass::fire_io_callback(
+            DerivedClass::fire_system_callback(
                 [=, message = std::move(message), endpoint = endpoint_ptr(endpoint_ref)]() mutable {
                     endpoint->send(message.data(), message.size());
 
@@ -439,7 +439,7 @@ void sc_notify_observers::notify(const char* address_pattern, const server_node*
 
     movable_array<char> message(p.Size(), p.Data());
 
-    cmd_dispatcher<true>::fire_io_callback([=, message = std::move(message)]() mutable {
+    cmd_dispatcher<true>::fire_system_callback([=, message = std::move(message)]() mutable {
         instance->send_notification(message.data(), message.size());
 
         cmd_dispatcher<true>::fire_rt_callback(
@@ -895,7 +895,7 @@ template <bool realtime> void handle_notify(ReceivedMessage const& message, endp
 }
 
 template <bool realtime> void handle_status(endpoint_ptr const& endpoint_ref) {
-    cmd_dispatcher<realtime>::fire_io_callback([=, endpoint = endpoint_ptr(endpoint_ref)]() {
+    cmd_dispatcher<realtime>::fire_system_callback([=, endpoint = endpoint_ptr(endpoint_ref)]() {
         if (unlikely(instance->quit_received)) // we don't reply once we are about to quit
             return;
 
@@ -934,7 +934,7 @@ template <bool realtime> void handle_sync(ReceivedMessage const& message, endpoi
     // ping pong: we go through the nrt->rt channel to ensure that earlier messages have been completely dispatched
     cmd_dispatcher<realtime>::fire_system_callback([=, endpoint = endpoint_ptr(endpoint)]() {
         cmd_dispatcher<realtime>::fire_rt_callback([=, endpoint = endpoint_ptr(endpoint)]() {
-            cmd_dispatcher<realtime>::fire_io_callback([=, endpoint = endpoint_ptr(endpoint)]() {
+            cmd_dispatcher<realtime>::fire_system_callback([=, endpoint = endpoint_ptr(endpoint)]() {
                 char buffer[128];
                 osc::OutboundPacketStream p(buffer, 128);
                 p << osc::BeginMessage("/synced") << id << osc::EndMessage;
@@ -954,7 +954,7 @@ void handle_error(ReceivedMessage const& message) {
 }
 
 template <bool realtime> void handle_version(endpoint_ptr const& endpoint_ref) {
-    cmd_dispatcher<realtime>::fire_io_callback([=, endpoint = endpoint_ptr(endpoint_ref)]() {
+    cmd_dispatcher<realtime>::fire_system_callback([=, endpoint = endpoint_ptr(endpoint_ref)]() {
         if (unlikely(instance->quit_received))
             return;
 
