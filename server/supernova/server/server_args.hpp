@@ -25,6 +25,8 @@
 
 #include <boost/asio.hpp>
 
+#include <dsp_thread_queue/dsp_thread_queue.hpp>
+
 namespace nova {
 
 class server_arguments {
@@ -67,6 +69,7 @@ public:
     std::vector<std::string> hw_name;
     bool memory_locking;
     uint16_t threads;
+    backoff_strategy backoff;
 
     std::vector<std::string> ugen_paths, restrict_paths;
 

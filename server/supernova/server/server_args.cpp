@@ -75,6 +75,7 @@ server_arguments::server_arguments(int argc, char* argv[]) {
 #endif
         ("restricted-path,P", value<vector<string> >(&restrict_paths), "if specified, prevents file-accessing OSC commands from accessing files outside <restricted-path>")
         ("threads,T", value<uint16_t>(&threads)->default_value(boost::thread::physical_concurrency()), "number of audio threads")
+        ("backoff,x", value<string>(), "backoff strategy (pause, yield, wait)")
         ("socket-address,B", value<string>(&socket_address_str)->default_value("127.0.0.1"), "Bind the UDP or TCP socket to this address.\n"
                                                             "Set to 0.0.0.0 to listen on all interfaces.")
         ;
@@ -116,6 +117,7 @@ server_arguments::server_arguments(int argc, char* argv[]) {
 
     non_rt = vm.count("nrt");
 
+
     if (non_rt) {
         std::vector<std::string> const& nrt_options = vm["nrt"].as<std::vector<std::string>>();
         if (nrt_options.size() != 6) {
@@ -141,6 +143,23 @@ server_arguments::server_arguments(int argc, char* argv[]) {
              << endl;
         std::exit(EXIT_FAILURE);
     };
+
+    if (vm.count("backoff")) {
+        auto b = vm["backoff"].as<std::string>();
+        if (b == "pause")
+            backoff = backoff_strategy::pause;
+        else if (b == "yield")
+            backoff = backoff_strategy::yield;
+        else if (b == "wait")
+            backoff = backoff_strategy::wait;
+        else {
+            cout << "Bad argument for `backoff` option (" << b
+                 << "); supported values: `pause`, `yield` and `wait`." << endl;
+            std::exit(EXIT_FAILURE);
+        }
+    } else {
+        backoff = non_rt ? backoff_strategy::yield : backoff_strategy::pause;
+    }
 }
 
 std::unique_ptr<server_arguments> server_arguments::instance_;

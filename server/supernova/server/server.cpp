@@ -49,8 +49,7 @@ nova_server::nova_server(server_arguments const& args):
     // different interfaces), they can end up using the same shmem location.
     server_shared_memory_creator(args.port(), args.control_busses),
     // TODO: make backoff_strategy a command line option
-    scheduler<thread_init_functor>(args.threads, !args.non_rt,
-                                   args.non_rt ? backoff_strategy::yield : backoff_strategy::pause),
+    scheduler<thread_init_functor>(args.threads, !args.non_rt, args.backoff),
     buffer_manager(args.buffers),
     sc_osc_handler(args) {
     assert(instance == 0);
