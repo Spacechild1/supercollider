@@ -30,7 +30,6 @@
 #include <cstdio>
 
 #include <boost/lockfree/stack.hpp>
-#include <boost/mpl/if.hpp>
 
 #include "nova-tt/pause.hpp"
 
@@ -415,7 +414,7 @@ private:
     };
 
     template <bool YieldBackoff> struct select_backoff {
-        typedef typename boost::mpl::if_c<YieldBackoff, yield_backoff, backoff>::type type;
+        typedef typename std::conditional<YieldBackoff, yield_backoff, backoff>::type type;
     };
 
     void calibrate_backoff(int timeout_in_seconds) {

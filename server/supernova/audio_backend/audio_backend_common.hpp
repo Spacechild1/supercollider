@@ -20,7 +20,6 @@
 
 #include <vector>
 
-#include <boost/mpl/if.hpp>
 #include <boost/align/aligned_allocator.hpp>
 
 #include "nova-simd/simd_memory.hpp"
@@ -32,8 +31,8 @@
 namespace nova { namespace detail {
 
 template <typename sample_type, typename io_sample_type, bool blocking, bool managed_memory = true>
-class audio_backend_base : boost::mpl::if_c<blocking, spin_lock, dummy_mutex>::type {
-    typedef typename boost::mpl::if_c<blocking, spin_lock, dummy_mutex>::type lock_t;
+class audio_backend_base : std::conditional<blocking, spin_lock, dummy_mutex>::type {
+    typedef typename std::conditional<blocking, spin_lock, dummy_mutex>::type lock_t;
     typedef std::size_t size_t;
 
 public:
