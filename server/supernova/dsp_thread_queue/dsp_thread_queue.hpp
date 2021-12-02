@@ -30,6 +30,7 @@
 #include <cstdio>
 
 #include <boost/lockfree/stack.hpp>
+#include <boost/sync/semaphore.hpp>
 
 #include "nova-tt/pause.hpp"
 
@@ -49,6 +50,12 @@ concept runnable
 };
 */
 
+enum class backoff_strategy {
+    pause,
+    yield,
+    wait
+};
+
 /** item of a dsp thread queue
  *
  * \tparam Alloc allocator for successor list
@@ -61,6 +68,7 @@ template <typename runnable, typename Alloc = std::allocator<void*>> class dsp_t
 
 public:
     typedef std::uint_fast16_t activation_limit_t;
+    typedef boost::uint_fast16_t node_count_t;
 
     struct successor_list {
         struct data_t {
@@ -117,14 +125,14 @@ public:
         successors(successors),
         activation_limit(activation_limit) {}
 
-    dsp_thread_queue_item* run(dsp_queue_interpreter& interpreter, std::uint8_t thread_index) {
+    std::pair<dsp_thread_queue_item*, node_count_t> run(dsp_queue_interpreter& interpreter, std::uint8_t thread_index) {
         assert(activation_count == 0);
 
         job(thread_index);
 
-        dsp_thread_queue_item* next = update_dependencies(interpreter);
+        auto result = update_dependencies(interpreter);
         reset_activation_count();
-        return next;
+        return result;
     }
 
     /** called from the run method or once, when dsp queue is initialized */
@@ -155,12 +163,13 @@ public:
 
 private:
     /** \brief update all successors and possibly mark them as runnable */
-    dsp_thread_queue_item* update_dependencies(dsp_queue_interpreter& interpreter) {
+    std::pair<dsp_thread_queue_item*, node_count_t> update_dependencies(dsp_queue_interpreter& interpreter) {
         dsp_thread_queue_item* next_item_to_run;
         std::size_t i = 0;
+        node_count_t pushed_items = 0;
         for (;;) {
             if (i == successors.size())
-                return nullptr;
+                return { nullptr, 0 };
 
             next_item_to_run = successors[i++]->decrement_activation_count();
             if (next_item_to_run)
@@ -170,11 +179,13 @@ private:
         // push remaining items to scheduler queue
         while (i != successors.size()) {
             dsp_thread_queue_item* next = successors[i++]->decrement_activation_count();
-            if (next)
+            if (next) {
                 interpreter.mark_as_runnable(next);
+                pushed_items++;
+            }
         }
 
-        return next_item_to_run;
+        return { next_item_to_run, pushed_items };
     }
 
     /** \brief decrement activation count and return this, if it drops to zero
@@ -310,7 +321,7 @@ public:
 
     typedef std::unique_ptr<dsp_thread_queue> dsp_thread_queue_ptr;
 
-    dsp_queue_interpreter(thread_count_t tc, bool yield_if_busy = false): yield_if_busy(yield_if_busy) {
+    dsp_queue_interpreter(thread_count_t tc, backoff_strategy strategy): strategy(strategy) {
         if (!runnable_items.is_lock_free())
             std::cout << "Warning: scheduler queue is not lockfree!" << std::endl;
 
@@ -380,19 +391,26 @@ public:
     thread_count_t get_used_helper_threads(void) const { return used_helper_threads; }
 
     void tick(thread_count_t thread_index) {
-        if (yield_if_busy)
-            run_item<true>(thread_index);
-        else
-            run_item<false>(thread_index);
+        switch (strategy) {
+        case backoff_strategy::pause:
+            run_item<backoff_strategy::pause>(thread_index);
+            break;
+        case backoff_strategy::yield:
+            run_item<backoff_strategy::yield>(thread_index);
+            break;
+        case backoff_strategy::wait:
+            run_item<backoff_strategy::wait>(thread_index);
+            break;
+        }
     }
 
 private:
     static const int max_backup_loops = 16384;
 
-    struct backoff {
-        backoff(int min, int max): min(min), max(max), loops(min) {}
+    struct pause_backoff {
+        pause_backoff(int min, int max): min(min), max(max), loops(min) {}
 
-        void run() {
+        void run(dsp_queue_interpreter&) {
             for (int i = 0; i != loops; ++i)
                 nova::detail::pause();
 
@@ -408,13 +426,24 @@ private:
     struct yield_backoff {
         yield_backoff(int dummy_min, int dummy_max) {}
 
-        void run() { std::this_thread::yield(); }
+        void run(dsp_queue_interpreter&) { std::this_thread::yield(); }
 
         void reset() {}
     };
 
-    template <bool YieldBackoff> struct select_backoff {
-        typedef typename std::conditional<YieldBackoff, yield_backoff, backoff>::type type;
+    struct wait_backoff {
+        wait_backoff(int dummy_min, int dummy_max) {}
+
+        void run(dsp_queue_interpreter& interpreter) {
+            interpreter.sem.wait();
+        }
+
+        void reset() {}
+    };
+
+    template <backoff_strategy Strategy> struct select_backoff {
+        typedef typename std::conditional<Strategy == backoff_strategy::pause, pause_backoff,
+            typename std::conditional<Strategy == backoff_strategy::yield, yield_backoff, wait_backoff>::type>::type type;
     };
 
     void calibrate_backoff(int timeout_in_seconds) {
@@ -424,12 +453,12 @@ private:
         const int backoff_iterations = 100;
 
         vector<nanoseconds> measured_values;
-        generate_n(back_inserter(measured_values), 16, [backoff_iterations] {
-            backoff b(max_backup_loops, max_backup_loops);
+        generate_n(back_inserter(measured_values), 16, [this, backoff_iterations] {
+            pause_backoff b(max_backup_loops, max_backup_loops);
             auto start = high_resolution_clock::now();
 
             for (int i = 0; i != backoff_iterations; ++i)
-                b.run();
+                b.run(*this);
 
             auto end = high_resolution_clock::now();
             auto diff = duration_cast<nanoseconds>(end - start);
@@ -443,11 +472,11 @@ private:
         watchdog_iterations = (seconds(timeout_in_seconds) / median) * backoff_iterations;
     }
 
-    template <bool YieldBackoff> void run_item(thread_count_t index) {
+    template <backoff_strategy Strategy> void run_item(thread_count_t index) {
         // note: in future we can avoid the watchdog on osx and linux, as they provide proper
         //       deadline scheduling policies
 
-        typedef typename select_backoff<YieldBackoff>::type backoff_t;
+        typedef typename select_backoff<Strategy>::type backoff_t;
 
         backoff_t b(8, max_backup_loops);
         int poll_counts = 0;
@@ -457,32 +486,32 @@ private:
                 return;
 
             /* we still have some nodes to process */
-            int state = run_next_item(index);
+            int state = run_next_item<Strategy>(index);
             switch (state) {
             case no_remaining_items:
                 return;
             case fifo_empty:
-                b.run();
+                b.run(*this);
                 ++poll_counts;
                 break;
 
             case remaining_items:
                 b.reset();
                 poll_counts = 0;
+                break;
             }
 
-            if (YieldBackoff)
-                continue;
-
-            if (poll_counts == watchdog_iterations) {
-                if (index == 0) {
-                    std::printf(
-                        "nova::dsp_queue_interpreter::run_item: possible lookup detected in main audio thread\n");
-                    abort();
-                } else {
-                    std::printf(
-                        "nova::dsp_queue_interpreter::run_item: possible lookup detected in dsp helper thread\n");
-                    return;
+            if (Strategy == backoff_strategy::pause) {
+                if (poll_counts == watchdog_iterations) {
+                    if (index == 0) {
+                        std::printf(
+                            "nova::dsp_queue_interpreter::run_item: possible lookup detected in main audio thread\n");
+                        abort();
+                    } else {
+                        std::printf(
+                            "nova::dsp_queue_interpreter::run_item: possible lookup detected in dsp helper thread\n");
+                        return;
+                    }
                 }
             }
         }
@@ -490,36 +519,47 @@ private:
 
 public:
     void tick_main(void) {
-        if (yield_if_busy)
-            run_item_main<true>();
-        else
-            run_item_main<false>();
+        switch (strategy) {
+        case backoff_strategy::pause:
+            run_item_main<backoff_strategy::pause>();
+            break;
+        case backoff_strategy::yield:
+            run_item_main<backoff_strategy::yield>();
+            break;
+        case backoff_strategy::wait:
+            run_item_main<backoff_strategy::wait>();
+            break;
+        }
     }
 
 private:
-    template <bool YieldBackoff> void run_item_main(void) {
-        run_item<YieldBackoff>(0);
-        wait_for_end<YieldBackoff>();
+    template <backoff_strategy Strategy> void run_item_main(void) {
+        run_item<Strategy>(0);
+        wait_for_end<Strategy>();
         assert(runnable_items.empty());
     }
 
-    template <bool YieldBackoff> void wait_for_end(void) {
-        typedef typename select_backoff<YieldBackoff>::type backoff_t;
+    template <backoff_strategy Strategy> void wait_for_end(void) {
+        typedef typename select_backoff<Strategy>::type backoff_t;
 
         backoff_t b(8, max_backup_loops);
         const int iterations = watchdog_iterations * 2;
         int count = 0;
         while (node_count.load(std::memory_order_acquire) != 0) {
-            b.run();
+            b.run(*this);
             ++count;
-            if (!YieldBackoff && (count == iterations)) {
-                std::printf("nova::dsp_queue_interpreter::wait_for_end: possible lookup detected\n");
+            if (Strategy == backoff_strategy::pause) {
+                if (count == iterations) {
+                    std::printf("nova::dsp_queue_interpreter::wait_for_end: possible lookup detected\n");
+                }
             }
         } // busy-wait for helper threads to finish
     }
 
+    template <backoff_strategy Strategy>
     HOT int run_next_item(thread_count_t index) {
         dsp_thread_queue_item* item;
+        node_count_t pushed_items;
         bool success = runnable_items.pop(item);
 
         if (!success)
@@ -528,8 +568,14 @@ private:
         node_count_t consumed = 0;
 
         do {
-            item = item->run(*this, index);
+            std::tie(item, pushed_items) = item->run(*this, index);
             consumed += 1;
+            if (Strategy == backoff_strategy::wait && item) {
+                // LATER improve post() to take the number as an argument
+                // also consider using a lightweight semaphore or event
+                for (node_count_t i = 0; i < pushed_items; ++i)
+                    sem.post(); // wake up worker thread
+            }
         } while (item != nullptr);
 
         node_count_t remaining = node_count.fetch_sub(consumed, std::memory_order_release);
@@ -542,7 +588,9 @@ private:
             return remaining_items;
     }
 
-    void mark_as_runnable(dsp_thread_queue_item* item) { runnable_items.push(item); }
+    void mark_as_runnable(dsp_thread_queue_item* item) {
+        runnable_items.push(item);
+    }
 
     friend class nova::dsp_thread_queue_item<runnable, Alloc>;
 
@@ -555,9 +603,10 @@ private:
     thread_count_t used_helper_threads; /* number of helper threads, which are actually used */
 
     boost::lockfree::stack<dsp_thread_queue_item*, boost::lockfree::capacity<32768>> runnable_items;
+    boost::sync::semaphore sem; // TODO: use lightweight semaphore
     std::atomic<node_count_t> node_count = { 0 }; /* number of nodes, that need to be processed during this tick */
     int watchdog_iterations;
-    bool yield_if_busy;
+    backoff_strategy strategy;
 };
 
 } /* namespace nova */

@@ -174,9 +174,9 @@ public:
 
     typedef std::unique_ptr<dsp_thread_queue<runnable, Alloc>> dsp_thread_queue_ptr;
 
-    dsp_thread_pool(thread_count_t count, bool yield_if_busy = false,
+    dsp_thread_pool(thread_count_t count, backoff_strategy strategy,
                     thread_init_functor const& init_functor = thread_init_functor()):
-        interpreter(std::min(count, (thread_count_t)std::thread::hardware_concurrency()), yield_if_busy) {
+        interpreter(std::min(count, (thread_count_t)std::thread::hardware_concurrency()), strategy) {
         set_dsp_thread_count(interpreter.get_thread_count(), init_functor);
     }
 
