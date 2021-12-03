@@ -343,8 +343,11 @@ public:
         assert(runnable_items.empty());
         node_count.store(queue->total_node_count(), std::memory_order_release);
 
-        for (auto* item : queue->initially_runnable_items)
+        for (auto* item : queue->initially_runnable_items) {
             mark_as_runnable(item);
+            if (strategy == backoff_strategy::wait)
+                sem.post();
+        }
 
         return true;
     }
