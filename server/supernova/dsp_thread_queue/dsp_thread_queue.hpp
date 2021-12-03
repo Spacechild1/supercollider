@@ -435,10 +435,18 @@ private:
     };
 
     struct wait_backoff {
+        static const int spin_count = 0; // 0: disable
+
         wait_backoff(int dummy_min, int dummy_max) {}
 
         void run(dsp_queue_interpreter& interpreter) {
-            interpreter.sem.wait();
+            auto& sem = interpreter.sem;
+            for (int i = 0; i != spin_count; ++i) {
+                if (sem.try_wait())
+                    return;
+                nova::detail::pause();
+            }
+            sem.wait();
         }
 
         void reset() {}
