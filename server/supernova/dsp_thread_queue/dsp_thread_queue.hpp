@@ -494,18 +494,18 @@ private:
         int poll_counts = 0;
 
         for (;;) {
-            if (!node_count.load(std::memory_order_acquire)) {
-                if (Strategy == backoff_strategy::wait)
-                    sem.post(); // notify the main audio thread
+            if (!node_count.load(std::memory_order_acquire))
                 return;
-            }
 
             /* we still have some nodes to process */
             int state = run_next_item<Strategy>(index);
             switch (state) {
             case no_remaining_items:
-                if (Strategy == backoff_strategy::wait)
-                    sem.post(); // notify the main audio thread
+                if (Strategy == backoff_strategy::wait) {
+                    // notify all other threads that we have finished
+                    for (int i = 0; i != used_helper_threads; ++i)
+                        sem.post();
+                }
                 return;
             case fifo_empty:
                 b.run(*this);
