@@ -33,6 +33,7 @@
 #include <boost/sync/semaphore.hpp>
 
 #include "nova-tt/pause.hpp"
+#include "nova-tt/semaphore.hpp"
 
 #include "utilities/branch_hints.hpp"
 #include "utilities/utils.hpp"
@@ -521,11 +522,11 @@ private:
                 if (poll_counts == watchdog_iterations) {
                     if (index == 0) {
                         std::printf(
-                            "nova::dsp_queue_interpreter::run_item: possible lookup detected in main audio thread\n");
+                            "nova::dsp_queue_interpreter::run_item: possible lockup detected in main audio thread\n");
                         abort();
                     } else {
                         std::printf(
-                            "nova::dsp_queue_interpreter::run_item: possible lookup detected in dsp helper thread\n");
+                            "nova::dsp_queue_interpreter::run_item: possible lockup detected in dsp helper thread\n");
                         return;
                     }
                 }
@@ -566,10 +567,10 @@ private:
             ++count;
             if (Strategy == backoff_strategy::pause) {
                 if (count == iterations) {
-                    std::printf("nova::dsp_queue_interpreter::wait_for_end: possible lookup detected\n");
+                    std::printf("nova::dsp_queue_interpreter::wait_for_end: possible lockup detected\n");
                 }
             }
-        } // busy-wait for helper threads to finish
+        } // (busy-)wait for helper threads to finish
     }
 
     template <backoff_strategy Strategy>
@@ -586,10 +587,9 @@ private:
         do {
             std::tie(item, pushed_items) = item->run(*this, index);
             consumed += 1;
-            if (Strategy == backoff_strategy::wait && item) {
+            if (Strategy == backoff_strategy::wait) {
                 // LATER improve post() to take the number as an argument
-                // also consider using a lightweight semaphore or event
-                for (node_count_t i = 0; i < pushed_items; ++i)
+                for (node_count_t i = 0; i != pushed_items; ++i)
                     sem.post(); // wake up worker thread
             }
         } while (item != nullptr);
@@ -619,7 +619,11 @@ private:
     thread_count_t used_helper_threads; /* number of helper threads, which are actually used */
 
     boost::lockfree::stack<dsp_thread_queue_item*, boost::lockfree::capacity<32768>> runnable_items;
-    boost::sync::semaphore sem; // TODO: use lightweight semaphore
+#if 1
+    nova::lightweight_semaphore sem;
+#else
+    nova::semaphore sem;
+#endif
     std::atomic<node_count_t> node_count = { 0 }; /* number of nodes, that need to be processed during this tick */
     int watchdog_iterations;
     backoff_strategy strategy;
