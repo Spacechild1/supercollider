@@ -39,7 +39,7 @@ SCBool UnitDef_Create(const char* inName, size_t inAllocSize, UnitCtorFunc inCto
     if (strlen(inName) >= kSCNameByteLen)
         return false;
 
-    UnitDef* unitDef = (UnitDef*)malloc(sizeof(UnitDef));
+    UnitDef* unitDef = new UnitDef {};
     if (!unitDef)
         return false;
 
@@ -49,12 +49,10 @@ SCBool UnitDef_Create(const char* inName, size_t inAllocSize, UnitCtorFunc inCto
     unitDef->mAllocSize = inAllocSize;
     unitDef->mUnitCtorFunc = inCtor;
     unitDef->mUnitDtorFunc = inDtor;
-
-    unitDef->mCmds = nullptr;
     unitDef->mFlags = inFlags;
 
     if (!AddUnitDef(unitDef)) {
-        free(unitDef);
+        delete unitDef;
         return false;
     }
     return true;
@@ -72,7 +70,7 @@ template <typename Func> static SCBool UnitDef_DoAddCmd(const char* inUnitDefNam
         return false;
 
     if (!unitDef->mCmds)
-        unitDef->mCmds = new HashTable<UnitCmd, Malloc>(&gMalloc, 4, true);
+        unitDef->mCmds = std::make_unique<StringHashTable<UnitCmd, Malloc>>(&gMalloc, 4, true);
 
     UnitCmd* cmd = new UnitCmd();
     strncpy((char*)cmd->mCmdName, inCmdName, kSCNameByteLen);
@@ -108,8 +106,10 @@ SCBool PlugIn_DefineCmd(const char* inCmdName, PlugInCmdFunc inFunc, void* inUse
     cmd->mFunc = inFunc;
     cmd->mHash = Hash(cmd->mCmdName);
     cmd->mUserData = inUserData;
-    AddPlugInCmd(cmd);
-
+    if (!AddPlugInCmd(cmd)) {
+        delete cmd;
+        return false;
+    }
     return true;
 }
 
@@ -133,15 +133,16 @@ SCErr Unit_DoCmd(World* inWorld, int inSize, const char* inData, ReplyAddress* i
 
     UnitDef* unitDef = unit->mUnitDef;
 
-    int32* cmdName = msg.gets4();
+    const int32* cmdName = msg.gets4();
     if (!cmdName)
         return kSCErr_Failed;
 
     if (!unitDef->mCmds)
         return kSCErr_Failed;
+
     UnitCmd* cmd = unitDef->mCmds->Get(cmdName);
     if (!cmd)
-        throw std::runtime_error(std::string((char*)cmdName) + " not found");
+        throw std::runtime_error(std::string((const char*)cmdName) + " not found");
 
     // only run unit command if the ctor has been called!
     if (graph->mNode.mCalcFunc == (NodeCalcFunc)&Graph_FirstCalc
@@ -165,7 +166,7 @@ void Unit_RunCommand(const UnitCmd* cmd, Unit* unit, sc_msg_iter* msg, ReplyAddr
 SCErr PlugIn_DoCmd(World* inWorld, int inSize, char* inData, ReplyAddress* inReply) {
     sc_msg_iter msg(inSize, inData);
 
-    int32* cmdName = msg.gets4();
+    const int32* cmdName = msg.gets4();
     if (!cmdName)
         return kSCErr_Failed;
 

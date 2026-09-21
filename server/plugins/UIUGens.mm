@@ -23,6 +23,8 @@
 #include <SC_Lock.h>
 
 #import <AppKit/AppKit.h>
+
+#include <atomic>
 #include <unistd.h>
 
 #include "SC_PlugIn.h"
@@ -35,8 +37,9 @@ struct KeyState : public Unit {
 
 
 struct MouseUGenGlobalState {
-    float mouseX, mouseY;
-    bool mouseButton;
+    std::atomic<float> mouseX { 0.f };
+    std::atomic<float> mouseY { 0.f };
+    std::atomic<bool> mouseButton { false };
 } gMouseUGenGlobals;
 
 struct MouseInputUGen : public Unit {
@@ -45,6 +48,8 @@ struct MouseInputUGen : public Unit {
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+
+static constexpr auto sleepInterval = std::chrono::milliseconds(17);
 
 std::atomic_bool inputThreadRunning = { false };
 
@@ -61,7 +66,7 @@ void gstate_update_func() {
         gMouseUGenGlobals.mouseY = (float)p.y * rscreenHeight;
         gMouseUGenGlobals.mouseButton = (bool)[NSEvent pressedMouseButtons];
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(17));
+        std::this_thread::sleep_for(sleepInterval);
     }
 
     return;

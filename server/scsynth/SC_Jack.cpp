@@ -182,7 +182,7 @@ void sc_jack_shutdown_cb(void* arg) {
     scprintf("%s: killed by jack\n", kJackDriverIdent);
     World* world = (World*)arg;
     world->hw->mTerminating = true;
-    world->hw->mQuitProgram->post();
+    world->hw->mQuitProgram.post();
 }
 
 // =====================================================================
@@ -216,9 +216,9 @@ bool SC_JackDriver::DriverSetup(int* outNumSamples, double* outSampleRate) {
     char* clientName = nullptr;
     char* serverName = nullptr;
 
-    if (mWorld->hw->mInDeviceName && (strlen(mWorld->hw->mInDeviceName) > 0)) {
+    if (!mWorld->hw->mInDeviceName.empty()) {
         // parse string <serverName>:<clientName>
-        SC_StringParser sp(mWorld->hw->mInDeviceName, ':');
+        SC_StringParser sp(mWorld->hw->mInDeviceName.c_str(), ':');
         if (!sp.AtEnd())
             serverName = strdup(sp.NextToken());
         if (!sp.AtEnd())

@@ -315,7 +315,7 @@ SCErr meth_n_map(World* inWorld, int inSize, char* inData, ReplyAddress* /*inRep
 
     while (msg.remain() >= 8) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int bus = msg.geti();
             Node_MapControl(node, Hash(name), name, 0, bus);
         } else {
@@ -336,7 +336,7 @@ SCErr meth_n_mapn(World* inWorld, int inSize, char* inData, ReplyAddress* /*inRe
 
     while (msg.remain() >= 12) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int32 hash = Hash(name);
             int bus = msg.geti();
             int n = msg.geti();
@@ -364,7 +364,7 @@ SCErr meth_n_mapa(World* inWorld, int inSize, char* inData, ReplyAddress* /*inRe
 
     while (msg.remain() >= 8) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int bus = msg.geti();
             Node_MapAudioControl(node, Hash(name), name, 0, bus);
         } else {
@@ -385,7 +385,7 @@ SCErr meth_n_mapan(World* inWorld, int inSize, char* inData, ReplyAddress* /*inR
 
     while (msg.remain() >= 12) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int32 hash = Hash(name);
             int bus = msg.geti();
             int n = msg.geti();
@@ -414,7 +414,7 @@ SCErr meth_n_set(World* inWorld, int inSize, char* inData, ReplyAddress* /*inRep
         int i = 0;
         int loop = 0;
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int32 hash = Hash(name);
             do {
                 switch (msg.nextTag('f')) {
@@ -553,7 +553,7 @@ SCErr meth_n_setn(World* inWorld, int inSize, char* inData, ReplyAddress* /*inRe
 
     while (msg.remain()) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int32 hash = Hash(name);
             int32 n = msg.geti();
             for (int i = 0; msg.remain() && i < n; ++i) {
@@ -606,7 +606,7 @@ SCErr meth_n_fill(World* inWorld, int inSize, char* inData, ReplyAddress* /*inRe
 
     while (msg.remain() >= 12) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int32 hash = Hash(name);
             int32 n = msg.geti();
             float32 value = msg.getf();
@@ -736,7 +736,7 @@ SCErr meth_d_free(World* inWorld, int inSize, char* inData, ReplyAddress* inRepl
 SCErr meth_d_free(World* inWorld, int inSize, char* inData, ReplyAddress* inReply) {
     sc_msg_iter msg(inSize, inData);
     while (msg.remain()) {
-        int32* defname = msg.gets4();
+        const int32* defname = msg.gets4();
         if (!defname)
             return kSCErr_SynthDefNotFound;
         SCErr err = GraphDef_Remove(inWorld, defname);
@@ -750,7 +750,7 @@ SCErr meth_d_free(World* inWorld, int inSize, char* inData, ReplyAddress* inRepl
 SCErr meth_s_do_new(World* inWorld, int inSize, char* inData, bool argtype) {
     SCErr err;
     sc_msg_iter msg(inSize, inData);
-    int32* defname = msg.gets4();
+    const int32* defname = msg.gets4();
     if (!defname)
         return kSCErr_WrongArgType;
 
@@ -1675,7 +1675,7 @@ SCErr meth_s_get(World* inWorld, int inSize, char* inData, ReplyAddress* inReply
 
     while (msg.remain() >= 4) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int32 hash = Hash(name);
             float32 value = 0.f;
             Graph_GetControl(graph, hash, name, 0, value);
@@ -1733,7 +1733,7 @@ SCErr meth_s_getn(World* inWorld, int inSize, char* inData, ReplyAddress* inRepl
 
     while (msg.remain()) {
         if (msg.nextTag('i') == 's') {
-            int32* name = msg.gets4();
+            const int32* name = msg.gets4();
             int32 hash = Hash(name);
             int32 n = msg.geti();
             packet.addtag('s');

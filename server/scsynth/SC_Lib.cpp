@@ -208,12 +208,12 @@ SCErr NewCommand(const char* inPath, uint32 inCommandNumber, SC_CommandFunc inFu
 
     SC_LibCmd* cmd = new SC_LibCmd(inFunc);
     cmd->SetName(path);
-    gCmdLib->Add(cmd);
+    gCmdLib.Add(cmd);
 
     // support OSC commands without the leading slash
     SC_LibCmd* cmd2 = new SC_LibCmd(inFunc);
     cmd2->SetName(inPath);
-    gCmdLib->Add(cmd2);
+    gCmdLib.Add(cmd2);
 
     // support integer OSC commands
     gCmdArray[inCommandNumber] = cmd;

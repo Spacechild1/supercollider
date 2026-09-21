@@ -24,6 +24,7 @@
 #include "HashTable.h"
 #include <filesystem>
 
+struct UnitSpec;
 struct World;
 
 struct ParamSpec {
@@ -33,13 +34,22 @@ struct ParamSpec {
     int32 mNumChannels;
 };
 
-typedef HashTable<ParamSpec, Malloc> ParamSpecTable;
+inline int32 GetHash(const ParamSpec* inParamSpec) { return inParamSpec->mHash; }
+inline const int32* GetKey(const ParamSpec* inParamSpec) { return inParamSpec->mName; }
+
+typedef StringHashTable<ParamSpec, Malloc> ParamSpecTable;
 
 /** \note Relevant scsynth code: `GraphDef_Read(World *, char*&, GraphDef*, int32)`
  *  \note Relevant supernova code: `sc_synthdef::prepare(void)`
  */
 struct GraphDef {
     NodeDef mNodeDef;
+
+    int32 mRefCount;
+
+    uint32 mNumParamSpecs;
+    ParamSpec* mParamSpecs;
+    ParamSpecTable mParamSpecTable;
 
     uint32 mNumControls;
     uint32 mNumAudioControls;
@@ -53,14 +63,15 @@ struct GraphDef {
     float32* mInitialControlValues;
     float32* mConstants;
 
-    struct UnitSpec* mUnitSpecs;
+    UnitSpec* mUnitSpecs;
 
-    size_t mWiresAllocSize, mUnitsAllocSize, mCalcUnitsAllocSize;
-    size_t mControlAllocSize, mMapControlsAllocSize, mMapControlRatesAllocSize, mAudioMapBusOffsetSize;
-
-    uint32 mNumParamSpecs;
-    ParamSpec* mParamSpecs;
-    ParamSpecTable* mParamSpecTable;
+    size_t mWiresAllocSize;
+    size_t mUnitsAllocSize;
+    size_t mCalcUnitsAllocSize;
+    size_t mControlAllocSize;
+    size_t mMapControlsAllocSize;
+    size_t mMapControlRatesAllocSize;
+    size_t mAudioMapBusOffsetSize;
 
     int32 mBlockSize;
     uint32 mBlockSizeIndex;
@@ -68,21 +79,20 @@ struct GraphDef {
     float32 mResampleFactor;
     uint32 mResampleIndex;
 
-    int mRefCount;
-    struct GraphDef* mNext;
-
-    struct GraphDef* mOriginal;
+    GraphDef* mNext;
+    GraphDef* mOriginal;
 
     uint32 mNumVariants;
-    struct GraphDef* mVariants;
+    GraphDef* mVariants;
 };
+
+inline const int32* GetKey(GraphDef* inGraphDef) { return inGraphDef->mNodeDef.mName; }
+inline int32 GetHash(GraphDef* inGraphDef) { return inGraphDef->mNodeDef.mHash; }
 
 GraphDef* GraphDef_Recv(World* inWorld, const char* buffer, size_t size, GraphDef* inList);
 GraphDef* GraphDef_Load(World* inWorld, const std::filesystem::path& path, GraphDef* inList);
 GraphDef* GraphDef_LoadDir(World* inWorld, const std::filesystem::path& path, GraphDef* inList);
 GraphDef* GraphDef_LoadGlob(World* inWorld, const char* pattern, GraphDef* inList);
-SCErr GraphDef_Remove(World* inWorld, int32* inName);
+SCErr GraphDef_Remove(World* inWorld, const int32* inName);
 SCErr GraphDef_DeleteMsg(World* inWorld, GraphDef* inDef);
 void GraphDef_Dump(GraphDef* inGraphDef);
-int32 GetHash(ParamSpec* inParamSpec);
-int32* GetKey(ParamSpec* inParamSpec);

@@ -78,7 +78,7 @@ void Node_Dtor(Node* inNode) {
     Node_StateMsg(inNode, kNode_End);
     Node_Remove(inNode);
     World* world = inNode->mWorld;
-    world->hw->mNodeLib->Remove(inNode);
+    world->hw->mNodeLib.Remove(inNode);
     World_Free(world, inNode);
 }
 
@@ -208,7 +208,7 @@ void Node_MapControl(Node* inNode, int inIndex, int inBus) {
 }
 
 // set a node's control so that it reads from a control bus - name argument
-void Node_MapControl(Node* inNode, int32 inHash, int32* inName, int inIndex, int inBus) {
+void Node_MapControl(Node* inNode, int32 inHash, const int32* inName, int inIndex, int inBus) {
     if (inNode->mIsGroup) {
         Group_MapControl((Group*)inNode, inHash, inName, inIndex, inBus);
     } else {
@@ -226,7 +226,7 @@ void Node_MapAudioControl(Node* inNode, int inIndex, int inBus) {
 }
 
 // set a node's control so that it reads from a control bus - name argument
-void Node_MapAudioControl(Node* inNode, int32 inHash, int32* inName, int inIndex, int inBus) {
+void Node_MapAudioControl(Node* inNode, int32 inHash, const int32* inName, int inIndex, int inBus) {
     if (inNode->mIsGroup) {
         Group_MapAudioControl((Group*)inNode, inHash, inName, inIndex, inBus);
     } else {
@@ -244,7 +244,7 @@ void Node_SetControl(Node* inNode, int inIndex, float inValue) {
 }
 
 // set a node's control value - name argument
-void Node_SetControl(Node* inNode, int32 inHash, int32* inName, int inIndex, float inValue) {
+void Node_SetControl(Node* inNode, int32 inHash, const int32* inName, int inIndex, float inValue) {
     if (inNode->mIsGroup) {
         Group_SetControl((Group*)inNode, inHash, inName, inIndex, inValue);
     } else {

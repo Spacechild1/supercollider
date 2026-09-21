@@ -35,7 +35,6 @@ struct NodeDef {
 
     size_t mAllocSize;
 };
-typedef struct NodeDef NodeDef;
 
 extern NodeDef gGroupNodeDef;
 

@@ -445,7 +445,7 @@ void Group_MapControl(Group* inGroup, uint32 inIndex, uint32 inBus) {
     }
 }
 
-void Group_MapControl(Group* inGroup, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus) {
+void Group_MapControl(Group* inGroup, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus) {
     Node* child = inGroup->mHead;
     while (child) {
         Node* next = child->mNext;
@@ -463,7 +463,7 @@ void Group_MapAudioControl(Group* inGroup, uint32 inIndex, uint32 inBus) {
     }
 }
 
-void Group_MapAudioControl(Group* inGroup, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus) {
+void Group_MapAudioControl(Group* inGroup, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus) {
     Node* child = inGroup->mHead;
     while (child) {
         Node* next = child->mNext;
@@ -480,7 +480,7 @@ void Group_SetControl(Group* inGroup, uint32 inIndex, float inValue) {
     }
 }
 
-void Group_SetControl(Group* inGroup, int32 inHash, int32* inName, uint32 inIndex, float inValue) {
+void Group_SetControl(Group* inGroup, int32 inHash, const int32* inName, uint32 inIndex, float inValue) {
     Node* child = inGroup->mHead;
     while (child) {
         Node* next = child->mNext;

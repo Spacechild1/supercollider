@@ -154,10 +154,10 @@ boost::asio::io_context ioContext;
 const int kTextBufSize = 65536;
 
 
-static void udp_reply_func(struct ReplyAddress* addr, char* msg, int size) {
+static void udp_reply_func(const ReplyAddress* addr, const char* msg, int size) {
     using namespace boost::asio;
 
-    ip::udp::socket* socket = reinterpret_cast<ip::udp::socket*>(addr->mReplyData);
+    ip::udp::socket* socket = static_cast<ip::udp::socket*>(addr->mReplyData);
     ip::udp::endpoint endpoint(addr->mAddress, addr->mPort);
 
     boost::system::error_code errc;
@@ -167,14 +167,14 @@ static void udp_reply_func(struct ReplyAddress* addr, char* msg, int size) {
         printf("%s\n", errc.message().c_str());
 }
 
-static void tcp_reply_func(struct ReplyAddress* addr, char* msg, int size) {
+static void tcp_reply_func(const ReplyAddress* addr, const char* msg, int size) {
     // Write size as 32bit unsigned network-order integer
     uint32 u = sc_htonl(size);
 
     using namespace boost::asio;
 
     // FIXME: connection could be destroyed!
-    ip::tcp::socket* socket = reinterpret_cast<ip::tcp::socket*>(addr->mReplyData);
+    ip::tcp::socket* socket = static_cast<ip::tcp::socket*>(addr->mReplyData);
 
 #if 0
 	ip::tcp::socket::message_flags flags = 0;
@@ -342,7 +342,7 @@ public:
         mClientIdentification.mAddress = socket.remote_endpoint().address();
 
         // first message must be the password. 4 tries.
-        bool validated = mWorld->hw->mPassword[0] == 0;
+        bool validated = mWorld->hw->mPassword.empty();
         for (int i = 0; !validated && i < 4; ++i) {
             // FIXME: error handling!
             size = boost::asio::read(socket, boost::asio::buffer((void*)&msglen, sizeof(int32)));
@@ -357,7 +357,7 @@ public:
             if (size < 0)
                 return;
 
-            validated = strcmp(buf, mWorld->hw->mPassword) == 0;
+            validated = mWorld->hw->mPassword == buf;
 
             std::this_thread::sleep_for(std::chrono::seconds(i + 1)); // thwart cracking.
         }
@@ -495,7 +495,7 @@ SC_TcpConnection::~SC_TcpConnection() {
     // the callback function removes its passed data, so we make a copy of our reply address.
     FifoMsg msg;
     msg.Set(mWorld, World_RemoveClient, nullptr, new ReplyAddress(mClientIdentification));
-    AudioDriver(mWorld)->SendMsgFromEngine(msg);
+    GetAudioDriver(mWorld)->SendMsgFromEngine(msg);
 
     // now close the socket
     try {

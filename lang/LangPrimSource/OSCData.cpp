@@ -257,9 +257,9 @@ static int makeSynthMsgWithTags(big_scpacket* packet, PyrSlot* slots, int size) 
 
 void PerformOSCBundle(int inSize, const char* inData, PyrObject* inReply, int inPortNum);
 void PerformOSCMessage(int inSize, const char* inData, PyrObject* inReply, int inPortNum, double time);
-static PyrObject* ConvertReplyAddress(ReplyAddress* inReply);
+static PyrObject* ConvertReplyAddress(const ReplyAddress* inReply);
 
-static void localServerReplyFunc(struct ReplyAddress* inReplyAddr, char* inBuf, int inSize) {
+static void localServerReplyFunc(const ReplyAddress* inReplyAddr, const char* inBuf, int inSize) {
     double timeReceived = elapsedTime();
     bool isBundle = IsBundle(inBuf);
 
@@ -345,7 +345,7 @@ static int netAddrSend(PyrObject* netAddrObj, int msglen, char* bufptr, bool sen
         if (addr == 0) {
 #ifndef NO_INTERNAL_SERVER
             if (gInternalSynthServer.mWorld) {
-                World_SendPacket(gInternalSynthServer.mWorld, msglen, bufptr, &localServerReplyFunc);
+                World_SendPacket(gInternalSynthServer.mWorld, msglen, bufptr, localServerReplyFunc);
             }
 #endif
             return errNone;
@@ -758,7 +758,7 @@ static PyrObject* ConvertOSCBundle(int inSize, const char* inData) {
     return result;
 }
 
-static PyrObject* ConvertReplyAddress(ReplyAddress* inReply) {
+static PyrObject* ConvertReplyAddress(const ReplyAddress* inReply) {
     VMGlobals* g = gMainVMGlobals;
     PyrObject* obj = instantiateObject(g->gc, s_netaddr->u.classobj, 2, true, false);
     PyrSlot* slots = obj->slots;

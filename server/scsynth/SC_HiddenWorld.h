@@ -29,8 +29,9 @@
 #include "SC_World.h"
 #include "SC_Reply.h"
 #include "MsgFifo.h"
-#include <map>
 #include <deque>
+#include <map>
+#include <optional>
 #include <set>
 
 #include "boost/sync/semaphore.hpp"
@@ -41,7 +42,10 @@
 #    include <SC_SndFileHelpers.hpp> // includes sndfile.h with appropriate configuration
 #endif
 
-extern HashTable<struct UnitDef, Malloc>* gUnitDefLib;
+class AllocPool;
+class SC_AudioDriver;
+
+extern StringHashTable<struct UnitDef, Malloc> gUnitDefLib;
 
 
 struct TriggerMsg {
@@ -92,47 +96,48 @@ typedef MsgFifoNoFree<TriggerMsg, 1024> TriggersFifo;
 typedef MsgFifoNoFree<NodeReplyMsg, 1024> NodeReplyFifo;
 typedef MsgFifoNoFree<NodeEndMsg, 1024> NodeEndsFifo;
 typedef MsgFifoNoFree<DeleteGraphDefMsg, 512> DeleteGraphDefsFifo;
-typedef HashTable<struct GraphDef, Malloc> GrafDefTable;
+typedef StringHashTable<struct GraphDef, Malloc> GraphDefTable;
+typedef IntHashTable<struct Node, AllocPool> NodeTable;
 
 typedef std::map<struct ReplyAddress, uint32> ClientIDDict;
 typedef std::deque<int> ClientIDs;
 typedef std::set<ReplyAddress> Clients;
 
 struct HiddenWorld {
-    class AllocPool* mAllocPool;
-    IntHashTable<struct Node, AllocPool>* mNodeLib;
-    GrafDefTable* mGraphDefLib;
-    uint32 mMaxUsers;
-    Clients* mUsers;
-    ClientIDs* mAvailableClientIDs;
-    ClientIDDict* mClientIDdict;
+    std::unique_ptr<AllocPool> mAllocPool;
+    NodeTable mNodeLib;
+    GraphDefTable mGraphDefLib;
+    uint32 mMaxUsers = 0;
+    Clients mUsers;
+    ClientIDs mAvailableClientIDs;
+    ClientIDDict mClientIDdict;
 
-    class SC_AudioDriver* mAudioDriver;
-    char mPassword[32];
+    std::unique_ptr<SC_AudioDriver> mAudioDriver;
+    std::string mPassword;
 
-    uint32 mMaxWireBufs;
-    float* mWireBufSpace;
+    uint32 mMaxWireBufs = 0;
+    float* mWireBufSpace = nullptr;
 
     TriggersFifo mTriggers;
     NodeReplyFifo mNodeMsgs;
     NodeEndsFifo mNodeEnds;
     DeleteGraphDefsFifo mDeleteGraphDefs;
 
-    boost::sync::semaphore* mQuitProgram;
-    bool mTerminating;
+    boost::sync::semaphore mQuitProgram { 0 };
+    bool mTerminating = false;
 
 #ifndef NO_LIBSNDFILE
-    SNDFILE* mNRTInputFile;
-    SNDFILE* mNRTOutputFile;
-    FILE* mNRTCmdFile;
+    SNDFILE* mNRTInputFile = nullptr;
+    SNDFILE* mNRTOutputFile = nullptr;
+    FILE* mNRTCmdFile = nullptr;
 #endif
 
-    int32 mHiddenID;
-    int32 mRecentID;
+    int32 mHiddenID = -8;
+    int32 mRecentID = -8;
 
 #ifdef __APPLE__
-    const char* mInputStreamsEnabled;
-    const char* mOutputStreamsEnabled;
+    std::optional<std::string> mInputStreamsEnabled;
+    std::optional<std::string> mOutputStreamsEnabled;
 #endif
 
 #ifdef SC_BELA
@@ -149,11 +154,9 @@ struct HiddenWorld {
     uint32 mBelaPru;
 #endif
 
-    const char* mInDeviceName;
-    const char* mOutDeviceName;
-    class server_shared_memory_creator* mShmem;
+    std::string mInDeviceName;
+    std::string mOutDeviceName;
+    std::unique_ptr<server_shared_memory_creator> mShmem;
 };
 
-typedef struct HiddenWorld HiddenWorld;
-
-inline SC_AudioDriver* AudioDriver(World* inWorld) { return inWorld->hw->mAudioDriver; }
+inline SC_AudioDriver* GetAudioDriver(World* inWorld) { return inWorld->hw->mAudioDriver.get(); }

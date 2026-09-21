@@ -188,7 +188,7 @@ bool ProcessOSCPacket(World* inWorld, OSC_Packet* inPacket) {
         return false;
     bool result;
     static_cast<SC_Lock*>(inWorld->mDriverLock)->lock();
-    SC_AudioDriver* driver = AudioDriver(inWorld);
+    SC_AudioDriver* driver = GetAudioDriver(inWorld);
     if (!driver) {
         static_cast<SC_Lock*>(inWorld->mDriverLock)->unlock();
         return false;
@@ -216,7 +216,7 @@ int PerformOSCMessage(World* inWorld, int inSize, char* inData, ReplyAddress* in
             cmdObj = gCmdArray[index];
     } else {
         cmdNameLen = OSCstrlen(inData);
-        cmdObj = gCmdLib->Get((int32*)inData);
+        cmdObj = gCmdLib.Get((int32*)inData);
     }
     if (!cmdObj) {
         CallSendFailureCommand(inWorld, inData, "Command not found", inReply);
@@ -249,7 +249,7 @@ void PerformOSCBundle(World* inWorld, OSC_Packet* inPacket) {
 }
 
 PacketStatus PerformOSCPacket(World* world, OSC_Packet* packet, SC_ScheduledEvent::PacketFreeFunc freeFunc) {
-    SC_AudioDriver* driver = world->hw->mAudioDriver;
+    SC_AudioDriver* driver = GetAudioDriver(world);
 
     if (!packet->mIsBundle) {
         PerformOSCMessage(world, packet->mSize, packet->mData, &packet->mReplyAddr);
@@ -315,13 +315,7 @@ void FreeOSCPacket(FifoMsg* inMsg) {
     OSC_Packet* packet = (OSC_Packet*)inMsg->mData;
     if (packet) {
         inMsg->mData = nullptr;
-#if _MSC_VER == 1310
-#    pragma message("$$$todo fixme hack for the 'uninitialized packet->mData ptr when using MSVC 7.1 debug")
-        if (packet->mData != reinterpret_cast<char*>(0xcdcdcdcd))
-            free(packet->mData);
-#else //#ifdef _MSC_VER
         free(packet->mData);
-#endif //#ifdef _MSC_VER
         free(packet);
     }
 }
@@ -363,7 +357,7 @@ void SC_AudioDriver::RunThread() {
         rt_print_flush_buffers();
 #endif // SC_BELA
 
-        reinterpret_cast<SC_Lock*>(mWorld->mNRTLock)->lock();
+        static_cast<SC_Lock*>(mWorld->mNRTLock)->lock();
 
         // send /tr messages
         trigfifo->Perform();
@@ -380,7 +374,7 @@ void SC_AudioDriver::RunThread() {
         // perform messages
         mFromEngine.Perform();
 
-        reinterpret_cast<SC_Lock*>(mWorld->mNRTLock)->unlock();
+        static_cast<SC_Lock*>(mWorld->mNRTLock)->unlock();
     }
 }
 
@@ -551,23 +545,23 @@ bool SC_CoreAudioDriver::DriverSetup(int* outNumSamplesPerCallback, double* outS
             break;
         }
 
-        AudioDeviceID* devices = (AudioDeviceID*)malloc(count);
+        int numDevices = count / sizeof(AudioDeviceID);
+
+        auto devices = std::make_unique<AudioDeviceID[]>(numDevices);
 
         // err = AudioHardwareGetProperty(kAudioHardwarePropertyDevices, &count, devices);
 
-        err = AudioObjectGetPropertyData(kAudioObjectSystemObject, &propertyAddress, 0, NULL, &count, devices);
+        err = AudioObjectGetPropertyData(kAudioObjectSystemObject, &propertyAddress, 0, NULL, &count, devices.get());
 
         if (err != kAudioHardwareNoError) {
             scprintf("get kAudioHardwarePropertyDevices error %4.4s\n", (char*)&err);
-            free(devices);
             break;
         }
 
-        int numdevices = count / sizeof(AudioDeviceID);
         if (mWorld->mVerbosity >= 0) {
-            scprintf("Number of Devices: %d\n", numdevices);
+            scprintf("Number of Devices: %d\n", numDevices);
         }
-        for (int i = 0; i < numdevices; ++i) {
+        for (int i = 0; i < numDevices; ++i) {
             propertyAddress.mSelector = kAudioDevicePropertyDeviceName;
 
             // err = AudioDeviceGetPropertyInfo(devices[i], 0, false, kAudioDevicePropertyDeviceName, &count, 0);
@@ -579,28 +573,25 @@ bool SC_CoreAudioDriver::DriverSetup(int* outNumSamplesPerCallback, double* outS
                 break;
             }
 
-            char* name = (char*)malloc(count);
+            std::string name(count, 0);
             // err = AudioDeviceGetProperty(devices[i], 0, false, kAudioDevicePropertyDeviceName, &count, name);
 
-            err = AudioObjectGetPropertyData(devices[i], &propertyAddress, 0, NULL, &count, name);
+            err = AudioObjectGetPropertyData(devices[i], &propertyAddress, 0, NULL, &count, name.data());
 
             if (err != kAudioHardwareNoError) {
                 scprintf("get kAudioDevicePropertyDeviceName error %4.4s A %d %p\n", (char*)&err, i, devices[i]);
-                free(name);
                 break;
             }
             if (mWorld->mVerbosity >= 0) {
-                scprintf("   %d : \"%s\"\n", i, name);
+                scprintf("   %d : \"%s\"\n", i, name.c_str());
             }
-            free(name);
         }
-        free(devices);
         if (mWorld->mVerbosity >= 0) {
             scprintf("\n");
         }
     } while (false);
 
-    if (mWorld->hw->mInDeviceName || mWorld->hw->mOutDeviceName) {
+    if (!mWorld->hw->mInDeviceName.empty() || !mWorld->hw->mOutDeviceName.empty()) {
         propertyAddress.mSelector = kAudioHardwarePropertyDevices;
 
         // err = AudioHardwareGetPropertyInfo(kAudioHardwarePropertyDevices, &count, 0);
@@ -612,18 +603,19 @@ bool SC_CoreAudioDriver::DriverSetup(int* outNumSamplesPerCallback, double* outS
             return false;
         }
 
-        AudioDeviceID* devices = (AudioDeviceID*)malloc(count);
+        int numDevices = count / sizeof(AudioDeviceID);
+
+        auto devices = std::make_unique<AudioDeviceID[]>(numDevices);
 
         // err = AudioHardwareGetProperty(kAudioHardwarePropertyDevices, &count, devices);
-        err = AudioObjectGetPropertyData(kAudioObjectSystemObject, &propertyAddress, 0, NULL, &count, devices);
+        err = AudioObjectGetPropertyData(kAudioObjectSystemObject, &propertyAddress, 0, NULL, &count, devices.get());
 
         if (err != kAudioHardwareNoError) {
             scprintf("get kAudioHardwarePropertyDevices error %4.4s\n", (char*)&err);
             return false;
         }
 
-        int numdevices = count / sizeof(AudioDeviceID);
-        for (int i = 0; i < numdevices; ++i) {
+        for (int i = 0; i < numDevices; ++i) {
             // err = AudioDeviceGetPropertyInfo(devices[i], 0, false, kAudioDevicePropertyDeviceName, &count, 0);
             propertyAddress.mSelector = kAudioDevicePropertyDeviceName;
             err = AudioObjectGetPropertyDataSize(devices[i], &propertyAddress, 0, NULL, &count);
@@ -633,27 +625,25 @@ bool SC_CoreAudioDriver::DriverSetup(int* outNumSamplesPerCallback, double* outS
                 break;
             }
 
-            char* name = (char*)malloc(count);
+            std::string name(count, 0);
 
             // err = AudioDeviceGetProperty(devices[i], 0, false, kAudioDevicePropertyDeviceName, &count, name);
 
-            err = AudioObjectGetPropertyData(devices[i], &propertyAddress, 0, NULL, &count, name);
+            err = AudioObjectGetPropertyData(devices[i], &propertyAddress, 0, NULL, &count, name.data());
 
             if (err != kAudioHardwareNoError) {
                 scprintf("get kAudioDevicePropertyDeviceName error %4.4s B %d %p\n", (char*)&err, i, devices[i]);
                 return false;
             }
-            if (strcmp(name, mWorld->hw->mInDeviceName) == 0) {
+            if (name == mWorld->hw->mInDeviceName) {
                 mInputDevice = devices[i];
             }
-            if (strcmp(name, mWorld->hw->mOutDeviceName) == 0) {
+            if (name == mWorld->hw->mOutDeviceName) {
                 mOutputDevice = devices[i];
             }
-            free(name);
             if (mInputDevice != kAudioDeviceUnknown && mOutputDevice != kAudioDeviceUnknown)
                 break;
         }
-        free(devices);
         if (mOutputDevice == kAudioDeviceUnknown || mInputDevice == kAudioDeviceUnknown)
             goto getDefault;
     } else {
@@ -959,21 +949,19 @@ bool SC_CoreAudioDriver::DriverSetup(int* outNumSamplesPerCallback, double* outS
             break;
         }
 
-        char* name = (char*)malloc(count);
+        std::string name(count, 0);
         // err = AudioDeviceGetProperty(mInputDevice, 0, false, kAudioDevicePropertyDeviceName, &count, name);
 
-        err = AudioObjectGetPropertyData(mInputDevice, &propertyAddress, 0, NULL, &count, name);
+        err = AudioObjectGetPropertyData(mInputDevice, &propertyAddress, 0, NULL, &count, name.data());
 
         if (err != kAudioHardwareNoError) {
             scprintf("get kAudioDevicePropertyDeviceName error %4.4s C %p\n", (char*)&err, mInputDevice);
-            free(name);
             break;
         }
 
         if (mWorld->mVerbosity >= 0) {
-            scprintf("\"%s\" Input Device\n", name);
+            scprintf("\"%s\" Input Device\n", name.c_str());
         }
-        free(name);
 
         Boolean writeable;
 
@@ -1684,7 +1672,7 @@ bool SC_CoreAudioDriver::DriverStart() {
             }
 
 
-            if (mWorld->hw->mInputStreamsEnabled) {
+            if (const auto& inputStreamsEnabled = mWorld->hw->mInputStreamsEnabled) {
                 propertyAddress.mSelector = kAudioDevicePropertyIOProcStreamUsage;
                 propertyAddress.mScope = kAudioDevicePropertyScopeInput;
                 propertyAddress.mElement = 0;
@@ -1697,16 +1685,16 @@ bool SC_CoreAudioDriver::DriverStart() {
 
                 err = AudioObjectGetPropertyData(mInputDevice, &propertyAddress, 0, NULL, &propertySize, su);
 
-                int len = std::min(su->mNumberStreams, (UInt32)strlen(mWorld->hw->mInputStreamsEnabled));
+                int len = std::min<int>(su->mNumberStreams, inputStreamsEnabled->size());
 
                 for (int i = 0; i < len; ++i) {
-                    su->mStreamIsOn[i] = mWorld->hw->mInputStreamsEnabled[i] == '1';
+                    su->mStreamIsOn[i] = (*inputStreamsEnabled)[i] == '1';
                 }
 
                 err = AudioObjectSetPropertyData(mInputDevice, &propertyAddress, 0, NULL, propertySize, su);
             }
 
-            if (mWorld->hw->mOutputStreamsEnabled) {
+            if (const auto& outputStreamsEnabled = mWorld->hw->mOutputStreamsEnabled) {
                 propertyAddress.mSelector = kAudioDevicePropertyIOProcStreamUsage;
                 propertyAddress.mScope = kAudioDevicePropertyScopeOutput;
                 propertyAddress.mElement = 0;
@@ -1719,10 +1707,10 @@ bool SC_CoreAudioDriver::DriverStart() {
 
                 err = AudioObjectGetPropertyData(mOutputDevice, &propertyAddress, 0, NULL, &propertySize, su);
 
-                int len = std::min(su->mNumberStreams, (UInt32)strlen(mWorld->hw->mOutputStreamsEnabled));
+                int len = std::min<int>(su->mNumberStreams, outputStreamsEnabled->size());
 
                 for (int i = 0; i < len; ++i) {
-                    su->mStreamIsOn[i] = mWorld->hw->mOutputStreamsEnabled[i] == '1';
+                    su->mStreamIsOn[i] = (*outputStreamsEnabled)[i] == '1';
                 }
 
                 err = AudioObjectSetPropertyData(mOutputDevice, &propertyAddress, 0, NULL, propertySize, su);
@@ -1749,7 +1737,7 @@ bool SC_CoreAudioDriver::DriverStart() {
                 return false;
             }
 
-            if (mWorld->hw->mInputStreamsEnabled) {
+            if (const auto& inputStreamsEnabled = mWorld->hw->mInputStreamsEnabled) {
                 propertyAddress.mSelector = kAudioDevicePropertyIOProcStreamUsage;
                 propertyAddress.mScope = kAudioDevicePropertyScopeOutput;
                 propertyAddress.mElement = 0;
@@ -1762,16 +1750,16 @@ bool SC_CoreAudioDriver::DriverStart() {
 
                 err = AudioObjectGetPropertyData(mOutputDevice, &propertyAddress, 0, NULL, &propertySize, su);
 
-                int len = std::min(su->mNumberStreams, (UInt32)strlen(mWorld->hw->mInputStreamsEnabled));
+                int len = std::min<int>(su->mNumberStreams, inputStreamsEnabled->size());
 
                 for (int i = 0; i < len; ++i) {
-                    su->mStreamIsOn[i] = mWorld->hw->mInputStreamsEnabled[i] == '1';
+                    su->mStreamIsOn[i] = (*inputStreamsEnabled)[i] == '1';
                 }
 
                 err = AudioObjectSetPropertyData(mOutputDevice, &propertyAddress, 0, NULL, propertySize, su);
             }
 
-            if (mWorld->hw->mOutputStreamsEnabled) {
+            if (const auto& outputStreamsEnabled = mWorld->hw->mOutputStreamsEnabled) {
                 propertyAddress.mSelector = kAudioDevicePropertyIOProcStreamUsage;
                 propertyAddress.mScope = kAudioDevicePropertyScopeOutput;
                 propertyAddress.mElement = 0;
@@ -1784,10 +1772,10 @@ bool SC_CoreAudioDriver::DriverStart() {
 
                 err = AudioObjectGetPropertyData(mOutputDevice, &propertyAddress, 0, NULL, &propertySize, su);
 
-                int len = std::min(su->mNumberStreams, (UInt32)strlen(mWorld->hw->mOutputStreamsEnabled));
+                int len = std::min<int>(su->mNumberStreams, outputStreamsEnabled->size());
 
                 for (int i = 0; i < len; ++i) {
-                    su->mStreamIsOn[i] = mWorld->hw->mOutputStreamsEnabled[i] == '1';
+                    su->mStreamIsOn[i] = (*outputStreamsEnabled)[i] == '1';
                 }
 
                 err = AudioObjectSetPropertyData(mOutputDevice, &propertyAddress, 0, NULL, propertySize, su);

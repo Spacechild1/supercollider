@@ -54,10 +54,6 @@ extern Malloc gMalloc;
 
 const size_t ERR_BUF_SIZE(256);
 
-int32 GetHash(ParamSpec* inParamSpec) { return inParamSpec->mHash; }
-
-int32* GetKey(ParamSpec* inParamSpec) { return inParamSpec->mName; }
-
 // this is used for reading count fields that have been changed from int16 to int32 in SynthDef v2.
 inline int32 readCount(const char*& buffer, const char* end, int version) {
     if (version >= 2)
@@ -181,7 +177,13 @@ void DoBufferColoring(World* inWorld, GraphDef* inGraphDef);
 
 void GraphDef_ReadVariant(World* inWorld, const char*& buffer, const char* end, GraphDef* inGraphDef,
                           GraphDef* inVariant) {
-    memcpy(inVariant, inGraphDef, sizeof(GraphDef));
+    // Make a *shallow* copy of the GraphDef and then override the name and initial control values.
+    // NOTE: the variants share all the arrays with the original GraphDef. This is not a problem as long as
+    // the variants are destroyed together with the original, see GraphDef_Define() resp. World_RemoveGraphDef().
+    // However, if the user tries to explicitly (re)define a variant, this would lead to a double-free when the
+    // original is removed. This can be easily solved by making deep copies of the original, at the cost of
+    // a larger memory footprint. Alternatively, we could prevent the user from redefining a variant.
+    *inVariant = *inGraphDef;
 
     inVariant->mNumVariants = 0;
     inVariant->mVariants = nullptr;
@@ -205,14 +207,14 @@ inline static void calcParamSpecs(GraphDef* graphDef, const char*& buffer, const
     uint32 numSpecs = graphDef->mNumParamSpecs;
     if (numSpecs > 0) {
         int hashTableSize = NEXTPOWEROFTWO(numSpecs);
-        graphDef->mParamSpecTable = new ParamSpecTable(&gMalloc, hashTableSize, false);
+        graphDef->mParamSpecTable.Init(&gMalloc, hashTableSize, false);
         graphDef->mParamSpecs = new ParamSpec[numSpecs];
         std::vector<IndexMap> tempMaps(numSpecs);
 
         for (uint32 i = 0; i < numSpecs; ++i) {
             ParamSpec* paramSpec = &graphDef->mParamSpecs[i];
             ParamSpec_Read(paramSpec, buffer, end, version);
-            graphDef->mParamSpecTable->Add(paramSpec);
+            graphDef->mParamSpecTable.Add(paramSpec);
             tempMaps[i].index = i;
             tempMaps[i].paramSpecIndex = paramSpec->mIndex;
         }
@@ -220,6 +222,7 @@ inline static void calcParamSpecs(GraphDef* graphDef, const char*& buffer, const
         // printf("\n\n**************\n");
         std::sort(tempMaps.begin(), tempMaps.end(),
                   [](const auto& a, const auto& b) { return a.paramSpecIndex < b.paramSpecIndex; });
+
         for (uint32 i = 0; i < (numSpecs - 1); ++i) {
             const auto& tempMap = tempMaps[i];
             const auto& nextTempMap = tempMaps[i + 1];
@@ -234,10 +237,6 @@ inline static void calcParamSpecs(GraphDef* graphDef, const char*& buffer, const
         paramSpec.mNumChannels = graphDef->mNumControls - tempMap.paramSpecIndex;
 
         // printf("%s: numChannels = %i\n", paramSpec.mName, paramSpec.mNumChannels, paramSpec.mIndex);
-    } else {
-        // empty table to eliminate test in Graph_SetControl
-        graphDef->mParamSpecTable = new ParamSpecTable(&gMalloc, 4, false);
-        graphDef->mParamSpecs = nullptr;
     }
 }
 
@@ -337,7 +336,8 @@ GraphDef* GraphDef_Read(World* inWorld, const char*& buffer, const char* end, Gr
     if (inVersion >= 1) {
         uint16 numVariants = readInt16_be(buffer, end);
         if (numVariants > 0) {
-            graphDef->mVariants = new GraphDef[numVariants];
+            /// value-initialize so that all members of GraphDef are initially set to zero!
+            graphDef->mVariants = new GraphDef[numVariants] {};
             for (uint32 i = 0; i < numVariants; ++i) {
                 GraphDef_ReadVariant(inWorld, buffer, end, graphDef.get(), graphDef->mVariants + i);
                 // increment mNumVariants after every successful call to GraphDef_ReadVariant()
@@ -386,7 +386,7 @@ void GraphDef_Define(World* inWorld, GraphDef* inList) {
     }
 }
 
-SCErr GraphDef_Remove(World* inWorld, int32* inName) {
+SCErr GraphDef_Remove(World* inWorld, const int32* inName) {
     GraphDef* graphDef = World_GetGraphDef(inWorld, inName);
     if (graphDef) {
         World_RemoveGraphDef(inWorld, graphDef);
@@ -397,7 +397,7 @@ SCErr GraphDef_Remove(World* inWorld, int32* inName) {
     return kSCErr_None;
 }
 
-SCErr SendReplyCmd_d_removed(World* inWorld, int inSize, char* inData, ReplyAddress* inReply) {
+SCErr SendReplyCmd_d_removed(World* inWorld, int inSize, char* inData, const ReplyAddress* inReply) {
     void* space = World_Alloc(inWorld, sizeof(SendReplyCmd));
     if (!space)
         return kSCErr_OutOfRealTimeMemory;
@@ -429,7 +429,7 @@ SCErr GraphDef_DeleteMsg(World* inWorld, GraphDef* inDef) {
     packet.addtag('s');
     packet.adds((char*)inDef->mNodeDef.mName);
 
-    for (auto addr : *inWorld->hw->mUsers) {
+    for (auto& addr : inWorld->hw->mUsers) {
         SCErr const err = SendReplyCmd_d_removed(inWorld, packet.size(), packet.data(), &addr);
         if (err != kSCErr_None)
             return err;
@@ -543,7 +543,6 @@ void GraphDef_Free(GraphDef* inGraphDef) {
     for (uint32 i = 0; i < inGraphDef->mNumVariants; ++i) {
         delete[] inGraphDef->mVariants[i].mInitialControlValues;
     }
-    delete inGraphDef->mParamSpecTable;
     delete[] inGraphDef->mParamSpecs;
     delete[] inGraphDef->mInitialControlValues;
     delete[] inGraphDef->mConstants;
@@ -583,12 +582,12 @@ public:
     BufColorAllocator();
 
     uint32 alloc(uint32 count);
-    bool release(int inIndex);
+    bool release(int32 inIndex);
     int NumBufs() { return mRefs.size(); }
 
 private:
-    std::vector<int16> mRefs;
-    std::vector<int16> mStack;
+    std::vector<int32> mRefs;
+    std::vector<int32> mStack;
 };
 
 inline BufColorAllocator::BufColorAllocator() {
@@ -611,7 +610,7 @@ inline uint32 BufColorAllocator::alloc(uint32 count) {
     return outIndex;
 }
 
-inline bool BufColorAllocator::release(int inIndex) {
+inline bool BufColorAllocator::release(int32 inIndex) {
     if (mRefs[inIndex] == 0)
         return false;
     if (--mRefs[inIndex] == 0) {
@@ -621,7 +620,7 @@ inline bool BufColorAllocator::release(int inIndex) {
 }
 
 static void ReleaseInputBuffers(GraphDef* inGraphDef, UnitSpec* unitSpec, BufColorAllocator& bufColor) {
-    for (int64 i = (int64)(unitSpec->mNumInputs) - 1; i >= 0; --i) {
+    for (int32 i = unitSpec->mNumInputs - 1; i >= 0; --i) {
         InputSpec* inputSpec = unitSpec->mInputSpec + i;
         if (inputSpec->mFromUnitIndex >= 0) {
             UnitSpec* outUnit = inGraphDef->mUnitSpecs + inputSpec->mFromUnitIndex;

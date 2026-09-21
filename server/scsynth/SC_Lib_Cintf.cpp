@@ -59,10 +59,10 @@ char gTempVal;
 namespace fs = std::filesystem;
 
 Malloc gMalloc;
-HashTable<SC_LibCmd, Malloc>* gCmdLib;
-HashTable<struct UnitDef, Malloc>* gUnitDefLib = nullptr;
-HashTable<struct BufGen, Malloc>* gBufGenLib = nullptr;
-HashTable<struct PlugInCmd, Malloc>* gPlugInCmds = nullptr;
+StringHashTable<SC_LibCmd, Malloc> gCmdLib;
+StringHashTable<struct UnitDef, Malloc> gUnitDefLib;
+StringHashTable<struct BufGen, Malloc> gBufGenLib;
+StringHashTable<struct PlugInCmd, Malloc> gPlugInCmds;
 extern struct InterfaceTable gInterfaceTable;
 SC_LibCmd* gCmdArray[NUMBER_OF_COMMANDS];
 
@@ -170,10 +170,10 @@ void deinitialize_library() {
 }
 
 void initialize_library(const char* uGensPluginPath) {
-    gCmdLib = new HashTable<SC_LibCmd, Malloc>(&gMalloc, 64, true);
-    gUnitDefLib = new HashTable<UnitDef, Malloc>(&gMalloc, 512, true);
-    gBufGenLib = new HashTable<BufGen, Malloc>(&gMalloc, 512, true);
-    gPlugInCmds = new HashTable<PlugInCmd, Malloc>(&gMalloc, 64, true);
+    gCmdLib.Init(&gMalloc, 64, true);
+    gUnitDefLib.Init(&gMalloc, 512, true);
+    gBufGenLib.Init(&gMalloc, 512, true);
+    gPlugInCmds.Init(&gMalloc, 64, true);
 
     initMiscCommands();
 

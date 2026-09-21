@@ -42,13 +42,14 @@ TestSynthDefVersions_Server : UnitTest {
 	serverLoadsAllSynthDefVersions { arg serverName;
 		var server = Server(thisMethod.name ++ "_" ++ serverName);
 
-		this.bootServer(server);
-
 		compiledDefs.pairsDo { |version, bytes|
-			var cond = Condition();
+			var cond = Condition(), ctlBus, defName;
+
+			// (re)boots the Server if necessary
+			this.bootServer(server);
+
 			// use a fresh pair of control busses for each def
-			var ctlBus = Bus.control(server, 2);
-			var defName;
+			ctlBus = Bus.control(server, 2);
 
 			server.sendMsg('/d_recv', bytes);
 
@@ -97,10 +98,12 @@ TestSynthDefVersions_Server : UnitTest {
 	serverHandlesCorruptSynthDefs { arg serverName;
 		var server = Server(thisMethod.name ++ "_" ++ serverName);
 
-		this.bootServer(server);
-
 		compiledDefs.pairsDo { |version, data|
 			var stream, cond = Condition();
+
+			// (re)boots the Server if necessary
+			this.bootServer(server);
+
 			data = data.copy; // !
 			// remove the last 4 bytes
 			data = data.extend(data.size - 4);

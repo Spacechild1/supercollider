@@ -74,7 +74,7 @@ struct sc_msg_iter {
     float32 getf(float32 defaultValue = 0.f);
     float64 getd(float64 defaultValue = 0.f);
     const char* gets(const char* defaultValue = 0);
-    int32* gets4(char* defaultValue = 0);
+    const int32* gets4(const char* defaultValue = 0);
     size_t getbsize();
     void getb(char* outData, size_t inSize);
     void skipb();
@@ -248,19 +248,19 @@ inline const char* sc_msg_iter::gets(const char* defaultValue) {
     return value;
 }
 
-inline int32* sc_msg_iter::gets4(char* defaultValue) {
-    int32* value;
+inline const int32* sc_msg_iter::gets4(const char* defaultValue) {
+    const int32* value;
     if (remain() <= 0)
         return 0;
     if (tags) {
         if (tags[count] == 's') {
-            value = (int32*)rdpos;
+            value = (const int32*)rdpos;
             rdpos = OSCstrskip(rdpos);
         } else {
-            value = (int32*)defaultValue;
+            value = (const int32*)defaultValue;
         }
     } else {
-        value = (int32*)rdpos;
+        value = (const int32*)rdpos;
         rdpos = OSCstrskip(rdpos);
     }
     count++;

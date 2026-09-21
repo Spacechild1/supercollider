@@ -46,8 +46,9 @@ struct KeyState : public Unit {
 
 
 struct MouseUGenGlobalState {
-    float mouseX, mouseY;
-    bool mouseButton;
+    std::atomic<float> mouseX { 0.f };
+    std::atomic<float> mouseY { 0.f };
+    std::atomic<bool> mouseButton { false };
 } gMouseUGenGlobals;
 
 struct MouseInputUGen : public Unit {
@@ -57,18 +58,20 @@ struct MouseInputUGen : public Unit {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
+static constexpr auto sleepInterval = std::chrono::milliseconds(17);
+
 std::atomic_bool inputThreadRunning = { false };
 
 #ifdef _WIN32
 
 void gstate_update_func() {
     POINT p;
-    int mButton;
+    int button;
 
     if (GetSystemMetrics(SM_SWAPBUTTON))
-        mButton = VK_RBUTTON; // if  swapped
+        button = VK_RBUTTON; // if  swapped
     else
-        mButton = VK_LBUTTON; // not swapped (normal)
+        button = VK_LBUTTON; // not swapped (normal)
 
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
@@ -87,8 +90,8 @@ void gstate_update_func() {
         GetCursorPos(&p);
         gMouseUGenGlobals.mouseX = (float)p.x * r_screenWidth;
         gMouseUGenGlobals.mouseY = 1.f - (float)p.y * r_screenHeight;
-        gMouseUGenGlobals.mouseButton = (GetKeyState(mButton) < 0);
-        std::this_thread::sleep_for(std::chrono::milliseconds(17));
+        gMouseUGenGlobals.mouseButton = (GetKeyState(button) < 0);
+        std::this_thread::sleep_for(sleepInterval);
     }
 }
 
@@ -127,7 +130,7 @@ void gstate_update_func() {
 
         gMouseUGenGlobals.mouseButton = (bool)(rep_mask & Button1Mask);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(17));
+        std::this_thread::sleep_for(sleepInterval);
     }
 }
 #endif

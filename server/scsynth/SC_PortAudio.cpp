@@ -276,28 +276,26 @@ bool SC_PortAudioDriver::DriverSetup(int* outNumSamples, double* outSampleRate) 
                 pdi->maxOutputChannels);
     }
 
-    auto* inDeviceName = mWorld->hw->mInDeviceName;
-    auto* outDeviceName = mWorld->hw->mOutDeviceName;
-    mDeviceInOut[0] = GetPaDeviceFromName(inDeviceName, true);
-    mDeviceInOut[1] = GetPaDeviceFromName(outDeviceName, false);
+    const auto& inDeviceName = mWorld->hw->mInDeviceName;
+    const auto& outDeviceName = mWorld->hw->mOutDeviceName;
+    mDeviceInOut[0] = GetPaDeviceFromName(inDeviceName.c_str(), true);
+    mDeviceInOut[1] = GetPaDeviceFromName(outDeviceName.c_str(), false);
 
     // report requested devices
     fprintf(stdout, "\nRequested devices:\n");
     if (mWorld->mNumInputs) {
-        auto nameIsEmpty = (inDeviceName && !inDeviceName[0]) || (inDeviceName == nullptr);
         fprintf(stdout, "  In%s:\n  - %s\n",
-                nameIsEmpty
+                inDeviceName.empty()
                     ? ""
                     : (mDeviceInOut[0] == paNoDevice ? " (matching device NOT found)" : " (matching device found)"),
-                (nameIsEmpty ? "(default)" : inDeviceName));
+                (inDeviceName.empty() ? "(default)" : inDeviceName.c_str()));
     }
     if (mWorld->mNumOutputs) {
-        auto nameIsEmpty = (outDeviceName && !outDeviceName[0]) || (outDeviceName == nullptr);
         fprintf(stdout, "  Out%s:\n  - %s\n",
-                nameIsEmpty
+                outDeviceName.empty()
                     ? ""
                     : (mDeviceInOut[1] == paNoDevice ? " (matching device NOT found)" : " (matching device found)"),
-                (nameIsEmpty ? "(default)" : outDeviceName));
+                (outDeviceName.empty() ? "(default)" : outDeviceName.c_str()));
     }
 
     fprintf(stdout, "\n");

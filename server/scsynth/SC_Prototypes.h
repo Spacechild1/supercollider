@@ -68,34 +68,25 @@ struct Graph* World_GetGraph(World* inWorld, int32 inID);
 
 struct Group* World_GetGroup(World* inWorld, int32 inID);
 
-int32* GetKey(struct UnitDef* inUnitDef);
-int32 GetHash(struct UnitDef* inUnitDef);
 bool AddUnitDef(struct UnitDef* inUnitDef);
 bool RemoveUnitDef(struct UnitDef* inUnitDef);
-struct UnitDef* GetUnitDef(int32* inKey);
+struct UnitDef* GetUnitDef(const int32* inKey);
 
-int32* GetKey(struct BufGen* inBufGen);
-int32 GetHash(struct BufGen* inBufGen);
 bool AddBufGen(struct BufGen* inBufGen);
 bool RemoveBufGen(struct BufGen* inBufGen);
-struct BufGen* GetBufGen(int32* inKey);
+struct BufGen* GetBufGen(const int32* inKey);
 
-int32* GetKey(struct PlugInCmd* inPlugInCmd);
-int32 GetHash(struct PlugInCmd* inPlugInCmd);
 bool AddPlugInCmd(struct PlugInCmd* inPlugInCmd);
 bool RemovePlugInCmd(struct PlugInCmd* inPlugInCmd);
-struct PlugInCmd* GetPlugInCmd(int32* inKey);
+struct PlugInCmd* GetPlugInCmd(const int32* inKey);
 SCErr PlugIn_DoCmd(World* inWorld, int inSize, char* inArgs, struct ReplyAddress* inReply);
 
-int32* GetKey(struct GraphDef* inGraphDef);
-int32 GetHash(struct GraphDef* inGraphDef);
 void World_AddGraphDef(World* inWorld, struct GraphDef* inGraphDef);
 void World_RemoveGraphDef(World* inWorld, struct GraphDef* inGraphDef);
-struct GraphDef* World_GetGraphDef(World* inWorld, int32* inKey);
+struct GraphDef* World_GetGraphDef(World* inWorld, const int32* inKey);
 void World_FreeAllGraphDefs(World* inWorld);
 void GraphDef_Free(GraphDef* inGraphDef);
 void GraphDef_Define(World* inWorld, GraphDef* inList);
-void GraphDef_FreeOverwritten(World* inWorld);
 
 SCErr bufAlloc(struct SndBuf* buf, int numChannels, int numFrames, double sampleRate);
 
@@ -106,7 +97,6 @@ void Rate_Init(struct Rate* inRate, double inSampleRate, int inBufLength);
 ////////////////////////////////////////////////////////////////////////
 
 #define GRAPHDEF(inGraph) ((GraphDef*)((inGraph)->mNode.mDef))
-#define GRAPH_PARAM_TABLE(inGraph) (GRAPHDEF(inGraph)->mParamSpecTable)
 
 SCErr Graph_New(World* inWorld, GraphDef* def, int32 inID, sc_msg_iter* args, Graph** outGraph, bool argtype = true);
 void Graph_Delete(Graph* inGraph);
@@ -114,13 +104,13 @@ void Graph_AddRef(Graph* inGraph);
 void Graph_Release(Graph* inGraph);
 bool Graph_HasParent(const Graph* inGraph);
 SCErr Graph_GetControl(Graph* inGraph, uint32 inIndex, float& outValue);
-SCErr Graph_GetControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, float& outValue);
+SCErr Graph_GetControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, float& outValue);
 void Graph_SetControl(Graph* inGraph, uint32 inIndex, float inValue);
-void Graph_SetControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, float inValue);
+void Graph_SetControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, float inValue);
 void Graph_MapControl(Graph* inGraph, uint32 inIndex, uint32 inBus);
-void Graph_MapControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus);
+void Graph_MapControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus);
 void Graph_MapAudioControl(Graph* inGraph, uint32 inIndex, uint32 inBus);
-void Graph_MapAudioControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus);
+void Graph_MapAudioControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus);
 void Graph_Trace(Graph* inGraph);
 
 ////////////////////////////////////////////////////////////////////////
@@ -134,11 +124,11 @@ void Node_AddAfter(struct Node* s, struct Node* afterThisOne);
 void Node_AddBefore(struct Node* s, struct Node* beforeThisOne);
 void Node_Replace(struct Node* s, struct Node* replaceThisOne);
 void Node_SetControl(Node* inNode, int inIndex, float inValue);
-void Node_SetControl(Node* inNode, int32 inHash, int32* inName, int inIndex, float inValue);
+void Node_SetControl(Node* inNode, int32 inHash, const int32* inName, int inIndex, float inValue);
 void Node_MapControl(Node* inNode, int inIndex, int inBus);
-void Node_MapControl(Node* inNode, int32 inHash, int32* inName, int inIndex, int inBus);
+void Node_MapControl(Node* inNode, int32 inHash, const int32* inName, int inIndex, int inBus);
 void Node_MapAudioControl(Node* inNode, int inIndex, int inBus);
-void Node_MapAudioControl(Node* inNode, int32 inHash, int32* inName, int inIndex, int inBus);
+void Node_MapAudioControl(Node* inNode, int32 inHash, const int32* inName, int inIndex, int inBus);
 void Node_StateMsg(Node* inNode, int inState);
 void Node_Trace(Node* inNode);
 void Node_SendReply(Node* inNode, int replyID, const char* cmdName, int numArgs, const float* values);
@@ -167,11 +157,11 @@ void Group_AddHead(Group* s, Node* child);
 void Group_AddTail(Group* s, Node* child);
 void Group_Insert(Group* s, Node* child, int inIndex);
 void Group_SetControl(struct Group* inGroup, uint32 inIndex, float inValue);
-void Group_SetControl(struct Group* inGroup, int32 inHash, int32* inName, uint32 inIndex, float inValue);
+void Group_SetControl(struct Group* inGroup, int32 inHash, const int32* inName, uint32 inIndex, float inValue);
 void Group_MapControl(Group* inGroup, uint32 inIndex, uint32 inBus);
-void Group_MapControl(Group* inGroup, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus);
+void Group_MapControl(Group* inGroup, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus);
 void Group_MapAudioControl(Group* inGroup, uint32 inIndex, uint32 inBus);
-void Group_MapAudioControl(Group* inGroup, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus);
+void Group_MapAudioControl(Group* inGroup, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus);
 void Group_Trace(Group* inGroup);
 void Group_DumpTree(Group* inGroup);
 void Group_DumpTreeAndControls(Group* inGroup);

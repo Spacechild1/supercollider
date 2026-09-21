@@ -215,7 +215,7 @@ static void Graph_Ctor(World* inWorld, GraphDef* inGraphDef, Graph* graph, sc_ms
             int i = 0;
             int loop = 0;
             if (msg->nextTag('i') == 's') {
-                int32* name = msg->gets4();
+                const int32* name = msg->gets4();
                 int32 hash = Hash(name);
                 do {
                     switch (msg->nextTag('f')) {
@@ -352,7 +352,7 @@ static void Graph_Ctor(World* inWorld, GraphDef* inGraphDef, Graph* graph, sc_ms
     else {
         while (msg->remain()) {
             if (msg->nextTag('i') == 's') {
-                int32* name = msg->gets4();
+                const int32* name = msg->gets4();
                 int32 hash = Hash(name);
                 int32 n = msg->geti();
                 for (int i = 0; msg->remain() && i < n; ++i) {
@@ -664,7 +664,8 @@ static void Graph_DispatchUnitCmds(Graph* inGraph) {
         Unit* unit = inGraph->mUnits[unitID];
         UnitDef* unitDef = unit->mUnitDef;
 
-        int32* cmdName = msg.gets4();
+        const int32* cmdName = msg.gets4();
+        assert(unitDef->mCmds != nullptr);
         UnitCmd* cmd = unitDef->mCmds->Get(cmdName);
 
         Unit_RunCommand(cmd, unit, &msg, &item->mReplyAddress);
@@ -820,9 +821,9 @@ SCErr Graph_GetControl(Graph* inGraph, uint32 inIndex, float& outValue) {
     return kSCErr_None;
 }
 
-SCErr Graph_GetControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, float& outValue) {
-    ParamSpecTable* table = GRAPH_PARAM_TABLE(inGraph);
-    ParamSpec* spec = table->Get(inHash, inName);
+SCErr Graph_GetControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, float& outValue) {
+    const auto& table = GRAPHDEF(inGraph)->mParamSpecTable;
+    ParamSpec* spec = table.Get(inHash, inName);
     if (!spec || inIndex >= spec->mNumChannels)
         return kSCErr_IndexOutOfRange;
     return Graph_GetControl(inGraph, spec->mIndex + inIndex, outValue);
@@ -837,9 +838,9 @@ void Graph_SetControl(Graph* inGraph, uint32 inIndex, float inValue) {
     *ptr = inValue;
 }
 
-void Graph_SetControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, float inValue) {
-    ParamSpecTable* table = GRAPH_PARAM_TABLE(inGraph);
-    ParamSpec* spec = table->Get(inHash, inName);
+void Graph_SetControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, float inValue) {
+    const auto& table = GRAPHDEF(inGraph)->mParamSpecTable;
+    ParamSpec* spec = table.Get(inHash, inName);
     if (!spec || inIndex >= spec->mNumChannels)
         return;
     // printf("setting: %s: to value %f\n", spec->mName, inValue);
@@ -847,9 +848,9 @@ void Graph_SetControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inInde
 }
 
 
-void Graph_MapControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus) {
-    ParamSpecTable* table = GRAPH_PARAM_TABLE(inGraph);
-    ParamSpec* spec = table->Get(inHash, inName);
+void Graph_MapControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus) {
+    const auto& table = GRAPHDEF(inGraph)->mParamSpecTable;
+    ParamSpec* spec = table.Get(inHash, inName);
     if (!spec || inIndex >= spec->mNumChannels)
         return;
     // printf("mapping: %s: to bus index %i\n", spec->mName, inBus);
@@ -869,9 +870,9 @@ void Graph_MapControl(Graph* inGraph, uint32 inIndex, uint32 inBus) {
     }
 }
 
-void Graph_MapAudioControl(Graph* inGraph, int32 inHash, int32* inName, uint32 inIndex, uint32 inBus) {
-    ParamSpecTable* table = GRAPH_PARAM_TABLE(inGraph);
-    ParamSpec* spec = table->Get(inHash, inName);
+void Graph_MapAudioControl(Graph* inGraph, int32 inHash, const int32* inName, uint32 inIndex, uint32 inBus) {
+    const auto& table = GRAPHDEF(inGraph)->mParamSpecTable;
+    ParamSpec* spec = table.Get(inHash, inName);
     if (!spec || inIndex >= spec->mNumChannels)
         return;
     // printf("mapping: %s: to bus index %i\n", spec->mName, inBus);

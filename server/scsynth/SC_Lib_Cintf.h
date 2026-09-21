@@ -39,7 +39,7 @@ private:
 };
 
 extern Malloc gMalloc;
-extern HashTable<class SC_LibCmd, Malloc>* gCmdLib;
+extern StringHashTable<class SC_LibCmd, Malloc> gCmdLib;
 
 void initialize_library(const char* mUGensPluginPath);
 void deinitialize_library();

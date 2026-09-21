@@ -127,7 +127,7 @@ char* allocAndRestrictPath(World* mWorld, const char* inPath, const char* restri
     return saferPath;
 }
 
-SC_SequencedCommand::SC_SequencedCommand(World* inWorld, ReplyAddress* inReplyAddress):
+SC_SequencedCommand::SC_SequencedCommand(World* inWorld, const ReplyAddress* inReplyAddress):
     mNextStage(1),
     mWorld(inWorld),
     mMsgSize(0),
@@ -205,7 +205,7 @@ void SC_SequencedCommand::CallNextStage() {
         break;
     }
     mNextStage++;
-    SC_AudioDriver* driver = AudioDriver(mWorld);
+    SC_AudioDriver* driver = GetAudioDriver(mWorld);
     if (sendAgain) {
         msg.Set(mWorld, DoSequencedCommand, nullptr, (void*)this);
         // send this to next time.
@@ -322,7 +322,7 @@ void BufAllocCmd::Stage4() {
 #include "sc_msg_iter.h"
 #include <string.h>
 
-BufGenCmd::BufGenCmd(World* inWorld, ReplyAddress* inReplyAddress):
+BufGenCmd::BufGenCmd(World* inWorld, const ReplyAddress* inReplyAddress):
     SC_SequencedCommand(inWorld, inReplyAddress),
     mData(nullptr) {}
 
@@ -337,7 +337,7 @@ int BufGenCmd::Init(char* inData, int inSize) {
     sc_msg_iter msg(mSize, mData);
     mBufIndex = msg.geti();
 
-    int32* genName = msg.gets4();
+    const int32* genName = msg.gets4();
     if (!genName)
         return kSCErr_WrongArgType;
 
@@ -785,15 +785,13 @@ bool BufAllocReadChannelCmd::Stage2() {
         if (err)
             goto leave;
         // alloc temp buffer
-        float* data = (float*)malloc(mNumFrames * fileinfo.channels * sizeof(float));
-        if (data == nullptr)
+        auto tempBuf = std::make_unique<float[]>(mNumFrames * fileinfo.channels);
+        if (tempBuf == nullptr)
             goto leave;
         // read some channels
         sf_seek(sf, mFileOffset, SEEK_SET);
-        sf_readf_float(sf, data, mNumFrames);
-        CopyChannels(buf->data, data, fileinfo.channels, mNumFrames);
-        // free temp buffer
-        free(data);
+        sf_readf_float(sf, tempBuf.get(), mNumFrames);
+        CopyChannels(buf->data, tempBuf.get(), fileinfo.channels, mNumFrames);
     }
 
 leave:
@@ -918,15 +916,13 @@ bool BufReadChannelCmd::Stage2() {
             sf_readf_float(sf, buf->data + (mBufOffset * buf->channels), mNumFrames);
         } else {
             // alloc temp buffer
-            float* data = (float*)malloc(mNumFrames * fileinfo.channels * sizeof(float));
-            if (data == nullptr)
+            auto tempBuf = std::make_unique<float[]>(mNumFrames * fileinfo.channels);
+            if (tempBuf == nullptr)
                 goto leave;
             // read some channels
             sf_seek(sf, mFileOffset, SEEK_SET);
-            sf_readf_float(sf, data, mNumFrames);
-            CopyChannels(buf->data + (mBufOffset * mNumChannels), data, fileinfo.channels, mNumFrames);
-            // free temp buffer
-            free(data);
+            sf_readf_float(sf, tempBuf.get(), mNumFrames);
+            CopyChannels(buf->data + (mBufOffset * mNumChannels), tempBuf.get(), fileinfo.channels, mNumFrames);
         }
     }
 
@@ -1127,7 +1123,7 @@ bool AudioQuitCmd::Stage3() {
 
 void AudioQuitCmd::Stage4() {
     SendDone("/quit");
-    mWorld->hw->mQuitProgram->post();
+    mWorld->hw->mQuitProgram.post();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1160,9 +1156,9 @@ bool AudioStatusCmd::Stage2() {
     packet.addi(mWorld->mNumUnits);
     packet.addi(mWorld->mNumGraphs);
     packet.addi(mWorld->mNumGroups);
-    packet.addi(mWorld->hw->mGraphDefLib->NumItems());
+    packet.addi(mWorld->hw->mGraphDefLib.NumItems());
 
-    SC_AudioDriver* driver = mWorld->hw->mAudioDriver;
+    SC_AudioDriver* driver = GetAudioDriver(mWorld);
     packet.addf(driver->GetAvgCPU());
     packet.addf(driver->GetPeakCPU());
     packet.addd(driver->GetSampleRate());
@@ -1223,6 +1219,7 @@ int popAvailableClientID(int const id, ClientIDs& availableIDs) {
     int clientID = -1;
     if (id == -1) {
         // no requested clientID
+        assert(!availableIDs.empty());
         clientID = availableIDs.front(); // pop an ID
         availableIDs.pop_front();
     } else {
@@ -1245,36 +1242,36 @@ bool NotifyCmd::Stage2() {
     HiddenWorld* hw = mWorld->hw;
 
     if (mOnOff) {
-        for (auto addr : *hw->mUsers) {
+        for (auto& addr : hw->mUsers) {
             if (mReplyAddress == addr) {
                 // already in table - don't fail though..
                 SendFailureWithIntValue(&mReplyAddress, "/notify", "notify: already registered\n",
-                                        hw->mClientIDdict->at(mReplyAddress));
+                                        hw->mClientIDdict.at(mReplyAddress));
                 scprintf("/notify : already registered\n");
                 return false;
             }
         }
 
-        if (hw->mUsers->size() >= hw->mMaxUsers) {
+        if (hw->mUsers.size() >= hw->mMaxUsers) {
             SendFailure(&mReplyAddress, "/notify", "too many users\n");
             scprintf("too many users\n");
             return false;
         }
 
-        int const clientID = popAvailableClientID(mID, *hw->mAvailableClientIDs);
+        const int clientID = popAvailableClientID(mID, hw->mAvailableClientIDs);
 
-        hw->mClientIDdict->insert(std::make_pair(mReplyAddress, clientID));
-        hw->mUsers->insert(mReplyAddress);
+        hw->mClientIDdict.emplace(mReplyAddress, clientID);
+        hw->mUsers.insert(mReplyAddress);
         SendDoneWithVarArgs(&mReplyAddress, "/notify", "ii", clientID, (int)hw->mMaxUsers);
 
     } else {
         // keep this in sync w/ `World_RemoveClient` implementation for TCP de-registration via disconnect
-        auto const it = std::find(hw->mUsers->begin(), hw->mUsers->end(), mReplyAddress);
-        if (it != hw->mUsers->end()) {
+        auto const it = std::find(hw->mUsers.begin(), hw->mUsers.end(), mReplyAddress);
+        if (it != hw->mUsers.end()) {
             // remove from list
-            hw->mAvailableClientIDs->push_back(hw->mClientIDdict->at(mReplyAddress)); // push the freed ID
-            hw->mClientIDdict->erase(mReplyAddress);
-            hw->mUsers->erase(it);
+            hw->mAvailableClientIDs.push_back(hw->mClientIDdict.at(mReplyAddress)); // push the freed ID
+            hw->mClientIDdict.erase(mReplyAddress);
+            hw->mUsers.erase(it);
             SendDone("/notify");
             return false;
         }
@@ -1473,7 +1470,7 @@ void LoadSynthDefDirCmd::Stage4() { SendDone("/d_loadDir"); }
 
 ///////////////////////////////////////////////////////////////////////////
 
-SendReplyCmd::SendReplyCmd(World* inWorld, ReplyAddress* inReplyAddress):
+SendReplyCmd::SendReplyCmd(World* inWorld, const ReplyAddress* inReplyAddress):
     SC_SequencedCommand(inWorld, inReplyAddress) {}
 
 int SendReplyCmd::Init(char* inData, int inSize) {

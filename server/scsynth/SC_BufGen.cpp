@@ -24,14 +24,14 @@
 #include "SC_Str4.h"
 
 SCBool BufGen_Create(const char* inName, BufGenFunc inFunc) {
-    BufGen* bufGen = (BufGen*)malloc(sizeof(BufGen));
+    BufGen* bufGen = new BufGen {};
     str4cpy(bufGen->mBufGenName, inName);
     bufGen->mHash = Hash(bufGen->mBufGenName);
 
     bufGen->mBufGenFunc = inFunc;
 
     if (!AddBufGen(bufGen)) {
-        free(bufGen);
+        delete bufGen;
         return false;
     }
     return true;

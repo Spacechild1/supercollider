@@ -309,13 +309,13 @@ SCBool get_scope_buffer(World* inWorld, int32 index, int32 channels, int32 maxFr
 }
 
 void push_scope_buffer(World* inWorld, ScopeBufferHnd* hnd, int frames) {
-    scope_buffer_writer writer(reinterpret_cast<scope_buffer*>(hnd->internalData));
+    scope_buffer_writer writer(static_cast<scope_buffer*>(hnd->internalData));
     writer.push(frames);
     hnd->data = writer.data();
 }
 
 void release_scope_buffer(World* inWorld, ScopeBufferHnd* hnd) {
-    scope_buffer_writer writer(reinterpret_cast<scope_buffer*>(hnd->internalData));
+    scope_buffer_writer writer(static_cast<scope_buffer*>(hnd->internalData));
     instance->release_scope_buffer_writer(writer);
 }
 
@@ -537,9 +537,9 @@ void send_trigger(Node* unit, int trigger_id, float value) {
     nova::instance->send_trigger(unit->mID, trigger_id, value);
 }
 
-void world_lock(World* world) { reinterpret_cast<SC_Lock*>(world->mNRTLock)->lock(); }
+void world_lock(World* world) { static_cast<SC_Lock*>(world->mNRTLock)->lock(); }
 
-void world_unlock(World* world) { reinterpret_cast<SC_Lock*>(world->mNRTLock)->unlock(); }
+void world_unlock(World* world) { static_cast<SC_Lock*>(world->mNRTLock)->unlock(); }
 
 Node* get_node(World* world, int id) {
     nova::server_node* node = nova::instance->find_node(id);
@@ -806,7 +806,7 @@ sc_plugin_interface::~sc_plugin_interface(void) {
     delete[] world.mSndBufsNonRealTimeMirror;
     delete[] world.mSndBufUpdates;
     delete[] world.mRGen;
-    delete reinterpret_cast<SC_Lock*>(world.mNRTLock);
+    delete static_cast<SC_Lock*>(world.mNRTLock);
 }
 
 namespace {

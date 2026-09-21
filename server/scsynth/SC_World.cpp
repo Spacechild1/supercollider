@@ -77,15 +77,16 @@
 #include "server_shm.hpp"
 
 #include <filesystem>
+#include <vector>
 
 namespace fs = std::filesystem;
 
 InterfaceTable gInterfaceTable;
 PrintFunc gPrint = nullptr;
 
-extern HashTable<struct UnitDef, Malloc>* gUnitDefLib;
-extern HashTable<struct BufGen, Malloc>* gBufGenLib;
-extern HashTable<PlugInCmd, Malloc>* gPlugInCmds;
+extern StringHashTable<struct UnitDef, Malloc> gUnitDefLib;
+extern StringHashTable<struct BufGen, Malloc> gBufGenLib;
+extern StringHashTable<PlugInCmd, Malloc> gPlugInCmds;
 
 #ifdef NO_LIBSNDFILE
 struct SF_INFO {};
@@ -287,70 +288,66 @@ bool asioThreadStarted();
 
 
 World* World_New(WorldOptions* inOptions) {
+    // thread-safe lazy initialization
+    static bool libInitted = [](auto options) {
+        InterfaceTable_Init();
+        initialize_library(options->mUGensPluginPath);
+        initializeScheduler();
+
 #if (_POSIX_MEMLOCK - 0) >= 200112L
-    if (inOptions->mMemoryLocking && inOptions->mRealTime) {
-        bool lock_memory = false;
+        if (options->mMemoryLocking && options->mRealTime) {
+            bool lock_memory = false;
 
-        rlimit limit;
+            rlimit limit;
 
-        int failure = getrlimit(RLIMIT_MEMLOCK, &limit);
-        if (failure)
-            scprintf("getrlimit failure\n");
-        else {
-            if (limit.rlim_cur == RLIM_INFINITY and limit.rlim_max == RLIM_INFINITY)
-                lock_memory = true;
-            else
-                scprintf("memory locking disabled due to resource limiting\n");
+            int failure = getrlimit(RLIMIT_MEMLOCK, &limit);
+            if (failure)
+                scprintf("getrlimit failure\n");
+            else {
+                if (limit.rlim_cur == RLIM_INFINITY and limit.rlim_max == RLIM_INFINITY)
+                    lock_memory = true;
+                else
+                    scprintf("memory locking disabled due to resource limiting\n");
 
-            if (lock_memory) {
-                if (mlockall(MCL_FUTURE) != -1)
-                    scprintf("memory locking enabled.\n");
+                if (lock_memory) {
+                    if (mlockall(MCL_FUTURE) != -1)
+                        scprintf("memory locking enabled.\n");
+                }
             }
         }
-    }
 #endif
+
+        return true;
+    }(inOptions);
 
     World* world = nullptr;
 
     try {
-        static bool gLibInitted = false;
-        if (!gLibInitted) {
-            InterfaceTable_Init();
-            initialize_library(inOptions->mUGensPluginPath);
-            initializeScheduler();
-            gLibInitted = true;
-        }
+        // value-initialize World and HiddenWorld so that all member are initially set to zero!
+        world = new World {};
 
-        world = (World*)zalloc(1, sizeof(World));
+        HiddenWorld* hw = new HiddenWorld {};
+        world->hw = hw;
 
-        world->hw = (HiddenWorld*)zalloc(1, sizeof(HiddenWorld));
-
-        world->hw->mAllocPool = new AllocPool(malloc, free, inOptions->mRealTimeMemorySize * 1024, 0);
-        world->hw->mQuitProgram = new boost::sync::semaphore(0);
-        world->hw->mTerminating = false;
-
-        HiddenWorld* hw = world->hw;
-        hw->mGraphDefLib = new HashTable<struct GraphDef, Malloc>(&gMalloc, inOptions->mMaxGraphDefs, false);
-        hw->mNodeLib = new IntHashTable<Node, AllocPool>(hw->mAllocPool, inOptions->mMaxNodes, false);
-        hw->mUsers = new Clients();
+        world->hw->mAllocPool = std::make_unique<AllocPool>(malloc, free, inOptions->mRealTimeMemorySize * 1024, 0);
+        hw->mGraphDefLib.Init(&gMalloc, inOptions->mMaxGraphDefs, false);
+        hw->mNodeLib.Init(hw->mAllocPool.get(), inOptions->mMaxNodes, false);
         hw->mMaxUsers = inOptions->mMaxLogins;
-        hw->mAvailableClientIDs = new ClientIDs();
         for (int i = 0; i < hw->mMaxUsers; i++) {
-            hw->mAvailableClientIDs->push_back(i);
+            hw->mAvailableClientIDs.push_back(i);
         }
-        hw->mClientIDdict = new ClientIDDict();
-        hw->mHiddenID = -8;
-        hw->mRecentID = -8;
 
+        world->mSampleRate = 0;
+        world->mBufLength = inOptions->mBufLength;
+        world->mBufCounter = 0;
 
         world->mNumUnits = 0;
         world->mNumGraphs = 0;
         world->mNumGroups = 0;
 
-        world->mBufCounter = 0;
-        world->mBufLength = inOptions->mBufLength;
         world->mSampleOffset = 0;
         world->mSubsampleOffset = 0.f;
+
         world->mNumAudioBusChannels = inOptions->mNumAudioBusChannels;
         world->mNumControlBusChannels = inOptions->mNumControlBusChannels;
         world->mNumInputs = inOptions->mNumInputBusChannels;
@@ -362,27 +359,28 @@ World* World_New(WorldOptions* inOptions) {
 
         if (inOptions->mSharedMemoryID) {
             server_shared_memory_creator::cleanup(inOptions->mSharedMemoryID);
-            hw->mShmem =
-                new server_shared_memory_creator(inOptions->mSharedMemoryID, inOptions->mNumControlBusChannels);
+            hw->mShmem = std::make_unique<server_shared_memory_creator>(inOptions->mSharedMemoryID,
+                                                                        inOptions->mNumControlBusChannels);
             world->mControlBus = hw->mShmem->get_control_busses();
         } else {
             hw->mShmem = nullptr;
-            world->mControlBus = (float*)zalloc(world->mNumControlBusChannels, sizeof(float));
+            world->mControlBus = new float[world->mNumControlBusChannels] {};
         }
 
         world->mNumSharedControls = 0;
         world->mSharedControls = inOptions->mSharedControls;
 
         int numsamples = world->mBufLength * world->mNumAudioBusChannels;
+        // we call zalloc() for memory alignment. QUESTION: is this really necessary?
         world->mAudioBus = (float*)zalloc(numsamples, sizeof(float));
 
-        world->mAudioBusTouched = (int32*)zalloc(inOptions->mNumAudioBusChannels, sizeof(int32));
-        world->mControlBusTouched = (int32*)zalloc(inOptions->mNumControlBusChannels, sizeof(int32));
+        world->mAudioBusTouched = new int32[inOptions->mNumAudioBusChannels] {};
+        world->mControlBusTouched = new int32[inOptions->mNumControlBusChannels] {};
 
         world->mNumSndBufs = inOptions->mNumBuffers;
-        world->mSndBufs = (SndBuf*)zalloc(world->mNumSndBufs, sizeof(SndBuf));
-        world->mSndBufsNonRealTimeMirror = (SndBuf*)zalloc(world->mNumSndBufs, sizeof(SndBuf));
-        world->mSndBufUpdates = (SndBufUpdates*)zalloc(world->mNumSndBufs, sizeof(SndBufUpdates));
+        world->mSndBufs = new SndBuf[world->mNumSndBufs] {};
+        world->mSndBufsNonRealTimeMirror = new SndBuf[world->mNumSndBufs] {};
+        world->mSndBufUpdates = new SndBufUpdates[world->mNumSndBufs] {};
 
         GroupNodeDef_Init();
 
@@ -404,10 +402,7 @@ World* World_New(WorldOptions* inOptions) {
         world->mDriverLock = new SC_Lock();
 
         if (inOptions->mPassword) {
-            strncpy(world->hw->mPassword, inOptions->mPassword, 31);
-            world->hw->mPassword[31] = 0;
-        } else {
-            world->hw->mPassword[0] = 0;
+            world->hw->mPassword = inOptions->mPassword;
         }
 #ifdef SC_BELA
         world->hw->mBelaAnalogInputChannels = inOptions->mBelaAnalogInputChannels;
@@ -421,15 +416,21 @@ World* World_New(WorldOptions* inOptions) {
         world->hw->mBelaAdcLevel = inOptions->mBelaAdcLevel;
         world->hw->mBelaNumMuxChannels = inOptions->mBelaNumMuxChannels;
         world->hw->mBelaPru = inOptions->mBelaPru;
+        world->mBelaContext = nullptr;
+        world->mBelaScope = nullptr;
         world->mBelaMaxScopeChannels = inOptions->mBelaMaxScopeChannels;
 #endif // SC_BELA
 
 #ifdef __APPLE__
-        world->hw->mInputStreamsEnabled = inOptions->mInputStreamsEnabled;
-        world->hw->mOutputStreamsEnabled = inOptions->mOutputStreamsEnabled;
+        if (inOptions->mInputStreamsEnabled)
+            world->hw->mInputStreamsEnabled = inOptions->mInputStreamsEnabled;
+        if (inOptions->mOutputStreamsEnabled)
+            world->hw->mOutputStreamsEnabled = inOptions->mOutputStreamsEnabled;
 #endif
-        world->hw->mInDeviceName = inOptions->mInDeviceName;
-        world->hw->mOutDeviceName = inOptions->mOutDeviceName;
+        if (inOptions->mInDeviceName)
+            world->hw->mInDeviceName = inOptions->mInDeviceName;
+        if (inOptions->mOutDeviceName)
+            world->hw->mOutDeviceName = inOptions->mOutDeviceName;
         hw->mMaxWireBufs = inOptions->mMaxWireBufs;
         hw->mWireBufSpace = nullptr;
 
@@ -440,7 +441,8 @@ World* World_New(WorldOptions* inOptions) {
         sc_SetDenormalFlags();
 
         if (world->mRealTime) {
-            hw->mAudioDriver = SC_NewAudioDriver(world);
+            auto audioDriver = SC_NewAudioDriver(world);
+            hw->mAudioDriver.reset(audioDriver);
             hw->mAudioDriver->SetPreferredHardwareBufferFrameSize(inOptions->mPreferredHardwareBufferFrameSize);
             hw->mAudioDriver->SetPreferredSampleRate(inOptions->mPreferredSampleRate);
 #ifdef __APPLE__
@@ -463,17 +465,13 @@ World* World_New(WorldOptions* inOptions) {
 #ifdef __APPLE__
             SC::Apple::disableAppNap();
 #endif
-
-
-        } else {
-            hw->mAudioDriver = nullptr;
         }
 
         if (!scsynth::asioThreadStarted()) {
             scsynth::startAsioThread();
         }
 
-    } catch (std::exception& exc) {
+    } catch (const std::exception& exc) {
         scprintf("Exception in World_New: %s\n", exc.what());
         World_Cleanup(world, true);
         return nullptr;
@@ -489,7 +487,7 @@ int World_CopySndBuf(World* world, uint32 index, SndBuf* outBuf, bool onlyIfChan
     bool didChange = updates->reads != updates->writes;
 
     if (!onlyIfChanged || didChange) {
-        reinterpret_cast<SC_Lock*>(world->mNRTLock)->lock();
+        static_cast<SC_Lock*>(world->mNRTLock)->lock();
 
         SndBuf* buf = world->mSndBufsNonRealTimeMirror + index;
 
@@ -522,7 +520,7 @@ int World_CopySndBuf(World* world, uint32 index, SndBuf* outBuf, bool onlyIfChan
 
         updates->reads = updates->writes;
 
-        reinterpret_cast<SC_Lock*>(world->mNRTLock)->unlock();
+        static_cast<SC_Lock*>(world->mNRTLock)->unlock();
     }
 
     if (outDidChange)
@@ -576,13 +574,13 @@ void World_NonRealTimeSynthesis(World* world, WorldOptions* inOptions) {
         throw std::runtime_error("Non real time output filename is NULL.\n");
 
     SF_INFO inputFileInfo, outputFileInfo;
-    float* inputFileBuf = nullptr;
-    float* outputFileBuf = nullptr;
+    std::vector<float> inputFileBuf;
+    std::vector<float> outputFileBuf;
     int numInputChannels = 0;
-    int numOutputChannels;
+    int numOutputChannels = outputFileInfo.channels = world->mNumOutputs;
 
     outputFileInfo.samplerate = inOptions->mPreferredSampleRate;
-    numOutputChannels = outputFileInfo.channels = world->mNumOutputs;
+
     sndfileFormatInfoFromStrings(&outputFileInfo, inOptions->mNonRealTimeOutputHeaderFormat,
                                  inOptions->mNonRealTimeOutputSampleFormat);
 
@@ -592,14 +590,14 @@ void World_NonRealTimeSynthesis(World* world, WorldOptions* inOptions) {
     if (!world->hw->mNRTOutputFile)
         throw std::runtime_error("Couldn't open non real time output file.\n");
 
-    outputFileBuf = (float*)calloc(1, world->mNumOutputs * fileBufFrames * sizeof(float));
+    outputFileBuf.resize(world->mNumOutputs * fileBufFrames);
 
     if (inOptions->mNonRealTimeInputFilename) {
         world->hw->mNRTInputFile = sndfileOpenFromCStr(inOptions->mNonRealTimeInputFilename, SFM_READ, &inputFileInfo);
         if (!world->hw->mNRTInputFile)
             throw std::runtime_error("Couldn't open non real time input file.\n");
 
-        inputFileBuf = (float*)calloc(1, inputFileInfo.channels * fileBufFrames * sizeof(float));
+        inputFileBuf.resize(inputFileInfo.channels * fileBufFrames);
 
         if (world->mNumInputs != (uint32)inputFileInfo.channels)
             scprintf("WARNING: input file channels didn't match number of inputs specified in options.\n");
@@ -657,14 +655,14 @@ void World_NonRealTimeSynthesis(World* world, WorldOptions* inOptions) {
     int32* outputTouched = world->mAudioBusTouched;
     for (; run;) {
         int bufFramesCalculated = 0;
-        float* inBufPos = inputFileBuf;
-        float* outBufPos = outputFileBuf;
+        float* inBufPos = inputFileBuf.data();
+        float* outBufPos = outputFileBuf.data();
 
         if (world->hw->mNRTInputFile) {
-            int framesRead = sf_readf_float(world->hw->mNRTInputFile, inputFileBuf, fileBufFrames);
+            int framesRead = sf_readf_float(world->hw->mNRTInputFile, inBufPos, fileBufFrames);
             if (framesRead < fileBufFrames) {
-                memset(inputFileBuf + framesRead * numInputChannels, 0,
-                       (fileBufFrames - framesRead) * numInputChannels * sizeof(float));
+                std::fill_n(inputFileBuf.data() + framesRead * numInputChannels,
+                            (fileBufFrames - framesRead) * numInputChannels, 0.f);
             }
         }
 
@@ -672,7 +670,7 @@ void World_NonRealTimeSynthesis(World* world, WorldOptions* inOptions) {
             int bufCounter = world->mBufCounter;
 
             // deinterleave input to input buses
-            if (inputFileBuf) {
+            if (!inputFileBuf.empty()) {
                 float* inBus = inputBuses;
                 for (int j = 0; j < numInputChannels; ++j, inBus += bufLength) {
                     float* inFileBufPtr = inBufPos + j;
@@ -742,7 +740,7 @@ void World_NonRealTimeSynthesis(World* world, WorldOptions* inOptions) {
 
     Bail:
         // write output
-        sf_writef_float(world->hw->mNRTOutputFile, outputFileBuf, bufFramesCalculated);
+        sf_writef_float(world->hw->mNRTOutputFile, outputFileBuf.data(), bufFramesCalculated);
     }
 
     if (cmdFile != stdin)
@@ -762,7 +760,7 @@ void World_NonRealTimeSynthesis(World* world, WorldOptions* inOptions) {
 
 void World_WaitForQuit(World* inWorld, bool unload_plugins) {
     try {
-        inWorld->hw->mQuitProgram->wait();
+        inWorld->hw->mQuitProgram.wait();
         World_Cleanup(inWorld, unload_plugins);
     } catch (std::exception& exc) { scprintf("Exception in World_WaitForQuit: %s\n", exc.what()); } catch (...) {
     }
@@ -790,19 +788,15 @@ void World_Free(World* inWorld, void* inPtr) { inWorld->hw->mAllocPool->Free(inP
 
 ////////////////////////////////////////////////////////////////////////////////
 
-int32* GetKey(GraphDef* inGraphDef) { return inGraphDef->mNodeDef.mName; }
-
-int32 GetHash(GraphDef* inGraphDef) { return inGraphDef->mNodeDef.mHash; }
-
 void World_AddGraphDef(World* inWorld, GraphDef* inGraphDef) {
-    bool added = inWorld->hw->mGraphDefLib->Add(inGraphDef);
+    bool added = inWorld->hw->mGraphDefLib.Add(inGraphDef);
     if (!added)
         scprintf(
             "ERROR: Could not add SynthDef %s.\nTry adjusting ServerOptions:maxSynthDefs or the -d cmdline flag.\n",
             (char*)inGraphDef->mNodeDef.mName);
     for (uint32 i = 0; i < inGraphDef->mNumVariants; ++i) {
         GraphDef* var = inGraphDef->mVariants + i;
-        added = inWorld->hw->mGraphDefLib->Add(var);
+        added = inWorld->hw->mGraphDefLib.Add(var);
         if (!added)
             scprintf(
                 "ERROR: Could not add SynthDef %s.\nTry adjusting ServerOptions:maxSynthDefs or the -d cmdline flag.\n",
@@ -813,74 +807,66 @@ void World_AddGraphDef(World* inWorld, GraphDef* inGraphDef) {
 void World_RemoveGraphDef(World* inWorld, GraphDef* inGraphDef) {
     for (uint32 i = 0; i < inGraphDef->mNumVariants; ++i) {
         GraphDef* var = inGraphDef->mVariants + i;
-        inWorld->hw->mGraphDefLib->Remove(var);
+        inWorld->hw->mGraphDefLib.Remove(var);
     }
-    inWorld->hw->mGraphDefLib->Remove(inGraphDef);
+    inWorld->hw->mGraphDefLib.Remove(inGraphDef);
 }
 
 void World_FreeAllGraphDefs(World* inWorld) {
-    GrafDefTable* lib = inWorld->hw->mGraphDefLib;
-    int size = lib->TableSize();
+    GraphDefTable& lib = inWorld->hw->mGraphDefLib;
+    int size = lib.TableSize();
     for (int i = 0; i < size; ++i) {
-        GraphDef* def = lib->AtIndex(i);
+        GraphDef* def = lib.AtIndex(i);
         if (def)
             GraphDef_Free(def);
     }
-    lib->MakeEmpty();
+    lib.MakeEmpty();
 }
 
-GraphDef* World_GetGraphDef(World* inWorld, int32* inKey) { return inWorld->hw->mGraphDefLib->Get(inKey); }
+GraphDef* World_GetGraphDef(World* inWorld, const int32* inKey) { return inWorld->hw->mGraphDefLib.Get(inKey); }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-int32* GetKey(UnitDef* inUnitDef) { return inUnitDef->mUnitDefName; }
+bool AddUnitDef(UnitDef* inUnitDef) { return gUnitDefLib.Add(inUnitDef); }
 
-int32 GetHash(UnitDef* inUnitDef) { return inUnitDef->mHash; }
+bool RemoveUnitDef(UnitDef* inUnitDef) { return gUnitDefLib.Remove(inUnitDef); }
 
-bool AddUnitDef(UnitDef* inUnitDef) { return gUnitDefLib->Add(inUnitDef); }
-
-bool RemoveUnitDef(UnitDef* inUnitDef) { return gUnitDefLib->Remove(inUnitDef); }
-
-UnitDef* GetUnitDef(int32* inKey) { return gUnitDefLib->Get(inKey); }
+UnitDef* GetUnitDef(const int32* inKey) { return gUnitDefLib.Get(inKey); }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-int32* GetKey(BufGen* inBufGen) { return inBufGen->mBufGenName; }
+// SC_BufGen.h is part of the public plugin API, so we rather put these definitions here.
+const int32* GetKey(const BufGen* inBufGen) { return inBufGen->mBufGenName; }
+int32 GetHash(const BufGen* inBufGen) { return inBufGen->mHash; }
 
-int32 GetHash(BufGen* inBufGen) { return inBufGen->mHash; }
+bool AddBufGen(BufGen* inBufGen) { return gBufGenLib.Add(inBufGen); }
 
-bool AddBufGen(BufGen* inBufGen) { return gBufGenLib->Add(inBufGen); }
+bool RemoveBufGen(BufGen* inBufGen) { return gBufGenLib.Remove(inBufGen); }
 
-bool RemoveBufGen(BufGen* inBufGen) { return gBufGenLib->Remove(inBufGen); }
-
-BufGen* GetBufGen(int32* inKey) { return gBufGenLib->Get(inKey); }
-
-////////////////////////////////////////////////////////////////////////////////
-
-int32* GetKey(PlugInCmd* inPlugInCmd) { return inPlugInCmd->mCmdName; }
-
-int32 GetHash(PlugInCmd* inPlugInCmd) { return inPlugInCmd->mHash; }
-
-bool AddPlugInCmd(PlugInCmd* inPlugInCmd) { return gPlugInCmds->Add(inPlugInCmd); }
-
-bool RemovePlugInCmd(PlugInCmd* inPlugInCmd) { return gPlugInCmds->Remove(inPlugInCmd); }
-
-PlugInCmd* GetPlugInCmd(int32* inKey) { return gPlugInCmds->Get(inKey); }
+BufGen* GetBufGen(const int32* inKey) { return gBufGenLib.Get(inKey); }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+bool AddPlugInCmd(PlugInCmd* inPlugInCmd) { return gPlugInCmds.Add(inPlugInCmd); }
+
+bool RemovePlugInCmd(PlugInCmd* inPlugInCmd) { return gPlugInCmds.Remove(inPlugInCmd); }
+
+PlugInCmd* GetPlugInCmd(const int32* inKey) { return gPlugInCmds.Get(inKey); }
+
+////////////////////////////////////////////////////////////////////////////////
+
+// SC_Node.h is part of the public plugin API, so we rather put these definitions here.
 int32 GetKey(Node* inNode) { return inNode->mID; }
-
 int32 GetHash(Node* inNode) { return inNode->mHash; }
 
-bool World_AddNode(World* inWorld, Node* inNode) { return inWorld->hw->mNodeLib->Add(inNode); }
+bool World_AddNode(World* inWorld, Node* inNode) { return inWorld->hw->mNodeLib.Add(inNode); }
 
-bool World_RemoveNode(World* inWorld, Node* inNode) { return inWorld->hw->mNodeLib->Remove(inNode); }
+bool World_RemoveNode(World* inWorld, Node* inNode) { return inWorld->hw->mNodeLib.Remove(inNode); }
 
 Node* World_GetNode(World* inWorld, int32 inID) {
     if (inID == -1)
         inID = inWorld->hw->mRecentID;
-    return inWorld->hw->mNodeLib->Get(inID);
+    return inWorld->hw->mNodeLib.Get(inID);
 }
 
 Graph* World_GetGraph(World* inWorld, int32 inID) {
@@ -931,8 +917,8 @@ void World_Cleanup(World* world, bool unload_plugins) {
     }
 
     HiddenWorld* hw = world->hw;
-
-    if (hw && world->mRealTime)
+    assert(hw != nullptr);
+    if (world->mRealTime)
         hw->mAudioDriver->Stop();
 
     world->mRunning = false;
@@ -945,15 +931,13 @@ void World_Cleanup(World* world, bool unload_plugins) {
     if (unload_plugins)
         deinitialize_library();
 
-    reinterpret_cast<SC_Lock*>(world->mDriverLock)->lock();
-    if (hw) {
-        sc_free(hw->mWireBufSpace);
-        delete hw->mAudioDriver;
-        hw->mAudioDriver = nullptr;
-    }
-    delete reinterpret_cast<SC_Lock*>(world->mNRTLock);
-    reinterpret_cast<SC_Lock*>(world->mDriverLock)->unlock();
-    delete reinterpret_cast<SC_Lock*>(world->mDriverLock);
+    static_cast<SC_Lock*>(world->mDriverLock)->lock();
+    sc_free(hw->mWireBufSpace);
+    hw->mAudioDriver = nullptr;
+    delete static_cast<SC_Lock*>(world->mNRTLock);
+    static_cast<SC_Lock*>(world->mDriverLock)->unlock();
+    delete static_cast<SC_Lock*>(world->mDriverLock);
+
     World_Free(world, world->mTopGroup);
 
     for (uint32 i = 0; i < world->mNumSndBufs; ++i) {
@@ -973,17 +957,19 @@ void World_Cleanup(World* world, bool unload_plugins) {
 #endif
     }
 
-    free_alig(world->mSndBufsNonRealTimeMirror);
-    free_alig(world->mSndBufs);
+    delete[] world->mSndBufsNonRealTimeMirror;
+    delete[] world->mSndBufs;
 
-    free_alig(world->mControlBusTouched);
-    free_alig(world->mAudioBusTouched);
-    if (hw->mShmem) {
-        delete hw->mShmem;
-    } else
-        free_alig(world->mControlBus);
+    delete[] world->mControlBusTouched;
+    delete[] world->mAudioBusTouched;
+    if (!hw->mShmem)
+        delete[] world->mControlBus;
+    // NOTE: the audio busses have been allocated with zalloc(), which internally
+    // calls malloc_alig()), so we must free them with free_alig(). See World_New().
     free_alig(world->mAudioBus);
+
     delete[] world->mRGen;
+
     if (hw) {
 #ifndef NO_LIBSNDFILE
         if (hw->mNRTInputFile)
@@ -993,16 +979,9 @@ void World_Cleanup(World* world, bool unload_plugins) {
         if (hw->mNRTCmdFile)
             fclose(hw->mNRTCmdFile);
 #endif
-        delete hw->mUsers;
-        delete hw->mAvailableClientIDs;
-        delete hw->mClientIDdict;
-        delete hw->mNodeLib;
-        delete hw->mGraphDefLib;
-        delete hw->mQuitProgram;
-        delete hw->mAllocPool;
-        free_alig(hw);
+        delete hw;
     }
-    free_alig(world);
+    delete world;
 }
 
 /** @brief Gets called when a TCP client disconnects. Since the client may have
@@ -1021,29 +1000,29 @@ void World_RemoveClient(FifoMsg* msg) {
     auto* address = static_cast<ReplyAddress*>(msg->mData);
     auto* hw = world->hw;
 
-    auto const it = hw->mUsers->find(*address);
-    if (it != hw->mUsers->end()) {
+    auto const it = hw->mUsers.find(*address);
+    if (it != hw->mUsers.end()) {
         // make client ID free to be picked up by others again
-        auto const clientId = hw->mClientIDdict->at(*address);
-        hw->mAvailableClientIDs->push_back(clientId);
+        auto const clientId = hw->mClientIDdict.at(*address);
+        hw->mAvailableClientIDs.push_back(clientId);
 
         // remove it elsewhere
-        hw->mClientIDdict->erase(*address);
-        hw->mUsers->erase(it);
+        hw->mClientIDdict.erase(*address);
+        hw->mUsers.erase(it);
     }
     // free msg
     delete address;
 }
 
 
-void World_NRTLock(World* world) { reinterpret_cast<SC_Lock*>(world->mNRTLock)->lock(); }
+void World_NRTLock(World* world) { static_cast<SC_Lock*>(world->mNRTLock)->lock(); }
 
-void World_NRTUnlock(World* world) { reinterpret_cast<SC_Lock*>(world->mNRTLock)->unlock(); }
+void World_NRTUnlock(World* world) { static_cast<SC_Lock*>(world->mNRTLock)->unlock(); }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 SCBool getScopeBuffer(World* inWorld, int index, int channels, int maxFrames, ScopeBufferHnd* hnd) {
-    server_shared_memory_creator* shm = inWorld->hw->mShmem;
+    auto shm = inWorld->hw->mShmem.get();
 
     scope_buffer_writer writer = shm->get_scope_buffer_writer(index, channels, maxFrames);
 
@@ -1060,14 +1039,14 @@ SCBool getScopeBuffer(World* inWorld, int index, int channels, int maxFrames, Sc
 }
 
 void pushScopeBuffer(World* inWorld, ScopeBufferHnd* hnd, int frames) {
-    scope_buffer_writer writer(reinterpret_cast<scope_buffer*>(hnd->internalData));
+    scope_buffer_writer writer(static_cast<scope_buffer*>(hnd->internalData));
     writer.push(frames);
     hnd->data = writer.data();
 }
 
 void releaseScopeBuffer(World* inWorld, ScopeBufferHnd* hnd) {
-    scope_buffer_writer writer(reinterpret_cast<scope_buffer*>(hnd->internalData));
-    server_shared_memory_creator* shm = inWorld->hw->mShmem;
+    scope_buffer_writer writer(static_cast<scope_buffer*>(hnd->internalData));
+    auto shm = inWorld->hw->mShmem.get();
     shm->release_scope_buffer_writer(writer);
 }
 
@@ -1109,7 +1088,7 @@ void TriggerMsg::Perform() {
     packet.addi(mTriggerID);
     packet.addf(mValue);
 
-    for (auto addr : *mWorld->hw->mUsers)
+    for (auto& addr : mWorld->hw->mUsers)
         SendReply(&addr, packet.data(), packet.size());
 }
 
@@ -1132,13 +1111,13 @@ void NodeReplyMsg::Perform() {
         packet.addf(mValues[i]);
     }
 
-    for (auto addr : *mWorld->hw->mUsers)
+    for (auto& addr : mWorld->hw->mUsers)
         SendReply(&addr, packet.data(), packet.size());
 
     // Free memory in realtime thread
     FifoMsg msg;
     msg.Set(mWorld, NodeReplyMsg_RTFree, nullptr, mRTMemory);
-    AudioDriver(mWorld)->SendMsgToEngine(msg);
+    GetAudioDriver(mWorld)->SendMsgToEngine(msg);
 }
 
 
@@ -1196,7 +1175,7 @@ void NodeEndMsg::Perform() {
         packet.addi(mIsGroup);
     }
 
-    for (auto addr : *mWorld->hw->mUsers)
+    for (auto& addr : mWorld->hw->mUsers)
         SendReply(&addr, packet.data(), packet.size());
 }
 
@@ -1207,7 +1186,7 @@ void NotifyNoArgs(World* inWorld, char* inString) {
     small_scpacket packet;
     packet.adds(inString);
 
-    for (auto addr : *inWorld->hw->mUsers)
+    for (auto& addr : inWorld->hw->mUsers)
         SendReply(&addr, packet.data(), packet.size());
 }
 

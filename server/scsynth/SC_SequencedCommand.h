@@ -59,7 +59,7 @@ struct Unit;
 
 class SC_SequencedCommand {
 public:
-    SC_SequencedCommand(World* inWorld, ReplyAddress* inReplyAddress);
+    SC_SequencedCommand(World* inWorld, const ReplyAddress* inReplyAddress);
     virtual ~SC_SequencedCommand();
 
     void Delete();
@@ -110,7 +110,7 @@ protected:
 
 class BufGenCmd : public SC_SequencedCommand {
 public:
-    BufGenCmd(World* inWorld, ReplyAddress* inReplyAddress);
+    BufGenCmd(World* inWorld, const ReplyAddress* inReplyAddress);
     virtual ~BufGenCmd();
 
     virtual int Init(char* inData, int inSize);
@@ -496,7 +496,7 @@ protected:
 
 class SendReplyCmd : public SC_SequencedCommand {
 public:
-    SendReplyCmd(World* inWorld, ReplyAddress* inReplyAddress);
+    SendReplyCmd(World* inWorld, const ReplyAddress* inReplyAddress);
 
     virtual int Init(char* inData, int inSize);
 

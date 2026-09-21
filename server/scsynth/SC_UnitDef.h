@@ -26,12 +26,18 @@
 #include "SC_Command.h"
 #include "HashTable.h"
 
+#include <memory>
+
+
 struct PlugInCmd {
     int32 mCmdName[kSCNameLen];
     int32 mHash;
     PlugInCmdFunc mFunc;
     void* mUserData;
 };
+
+inline const int32* GetKey(const PlugInCmd* inPlugInCmd) { return inPlugInCmd->mCmdName; }
+inline int32 GetHash(const PlugInCmd* inPlugInCmd) { return inPlugInCmd->mHash; }
 
 struct UnitCmd {
     int32 mCmdName[kSCNameLen];
@@ -43,6 +49,9 @@ struct UnitCmd {
     bool mHasFuncEx;
 };
 
+inline const int32* GetKey(UnitCmd* inCmd) { return inCmd->mCmdName; }
+inline int32 GetHash(UnitCmd* inCmd) { return inCmd->mHash; }
+
 struct UnitDef {
     int32 mUnitDefName[kSCNameLen];
     int32 mHash;
@@ -51,9 +60,13 @@ struct UnitDef {
     UnitCtorFunc mUnitCtorFunc;
     UnitDtorFunc mUnitDtorFunc;
 
-    HashTable<UnitCmd, Malloc>* mCmds;
+    // only allocate unit command dict on demand
+    std::unique_ptr<StringHashTable<UnitCmd, Malloc>> mCmds;
     uint32 mFlags;
 };
+
+inline const int32* GetKey(const UnitDef* inUnitDef) { return inUnitDef->mUnitDefName; }
+inline int32 GetHash(const UnitDef* inUnitDef) { return inUnitDef->mHash; }
 
 SCBool UnitDef_Create(const char* inName, size_t inAllocSize, UnitCtorFunc inCtor, UnitDtorFunc inDtor, uint32 inFlags);
 SCBool UnitDef_AddCmd(const char* inUnitDefName, const char* inCmdName, UnitCmdFunc inFunc);
@@ -63,6 +76,3 @@ SCBool PlugIn_DefineCmd(const char* inCmdName, PlugInCmdFunc inFunc, void* inUse
 
 SCErr Unit_DoCmd(struct World* inWorld, int inSize, const char* inData, ReplyAddress* inReplyAddr);
 void Unit_RunCommand(const UnitCmd* cmd, Unit* unit, sc_msg_iter* msg, ReplyAddress* inReplyAddr);
-
-inline int32* GetKey(UnitCmd* inCmd) { return inCmd->mCmdName; }
-inline int32 GetHash(UnitCmd* inCmd) { return inCmd->mHash; }

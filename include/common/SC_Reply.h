@@ -22,4 +22,4 @@
 #pragma once
 
 struct ReplyAddress;
-typedef void (*ReplyFunc)(struct ReplyAddress* inReplyAddr, char* inBuf, int inSize);
+typedef void (*ReplyFunc)(const struct ReplyAddress* inReplyAddr, const char* inBuf, int inSize);

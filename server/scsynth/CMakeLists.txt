@@ -71,7 +71,7 @@ set(scsynth_sources
 	SC_Graph.cpp
 	SC_GraphDef.cpp
 	SC_Group.cpp
-	SC_HiddenWorld.h
+	SC_HiddenWorld.cpp
 	SC_Lib_Cintf.cpp
 	SC_Lib.cpp
 	SC_MiscCmds.cpp
@@ -92,7 +92,6 @@ set(scsynth_sources
 	${CMAKE_SOURCE_DIR}/common/SC_fftlib.cpp
 	${CMAKE_SOURCE_DIR}/common/SC_AllocPool.cpp
 	${CMAKE_SOURCE_DIR}/common/SC_Errors.cpp
-	${CMAKE_SOURCE_DIR}/common/SC_Reply.cpp
 	${CMAKE_SOURCE_DIR}/common/SC_StringBuffer.cpp
 	${CMAKE_SOURCE_DIR}/common/SC_StringParser.cpp
 	${CMAKE_SOURCE_DIR}/common/Samp.cpp
@@ -138,8 +137,7 @@ elseif (AUDIOAPI STREQUAL bela)
     list(APPEND scsynth_sources SC_Bela.cpp)
 elseif (AUDIOAPI STREQUAL webaudio)
     list(REMOVE_ITEM scsynth_sources
-            SC_ComPort.cpp
-            ${CMAKE_SOURCE_DIR}/common/SC_Reply.cpp
+	    SC_ComPort.cpp
     )
     list(APPEND scsynth_sources
             SC_WebAudio.cpp

@@ -34,4 +34,3 @@ struct UnitSpec {
     struct Rate* mRateInfo;
     size_t mAllocSize;
 };
-typedef struct UnitSpec UnitSpec;

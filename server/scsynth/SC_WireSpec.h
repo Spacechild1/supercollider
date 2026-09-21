@@ -36,7 +36,7 @@ struct OutputSpec {
     int16 mCalcRate;
     // computed:
     int32 mWireIndex; // changed from uint16, ver 2
-    int64 mBufferIndex;
+    int32 mBufferIndex;
     uint32 mNumConsumers;
 };
 typedef struct OutputSpec OutputSpec;

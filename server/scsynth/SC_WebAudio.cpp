@@ -29,7 +29,7 @@
 #include "SC_WorldOptions.h"
 
 // forward declarations
-static void jsReplyFunc(ReplyAddress*, char* msg, int size);
+static void jsReplyFunc(const ReplyAddress*, const char* msg, int size);
 bool ProcessOSCPacket(World*, OSC_Packet*); // SC_CoreAudio function
 class SC_WebAudioDriver;
 
@@ -278,11 +278,6 @@ bool SC_WebAudioDriver::DriverStart() {
  *  Fake implementations
  */
 
-// fill SC_ReplyImpl.hpp implementation holes
-void null_reply_func(struct ReplyAddress* addr, char* msg, int size) {}
-bool operator==(const ReplyAddress& a, const ReplyAddress& b) { return true; }
-bool operator<(const ReplyAddress& a, const ReplyAddress& b) { return true; }
-
 // Fill ComPort implementation holes
 namespace scsynth {
 void startAsioThread() {}
@@ -327,7 +322,7 @@ int World_OpenTCP(World*, const char*, int, int, int) { return 1; }
  * The caller is responsible for freeing the passed message.
  * A copy is made b/c the function is async and the object could be out-of-scope already by then.
  */
-static void jsReplyFunc(ReplyAddress*, char* msg, int size) {
+static void jsReplyFunc(const ReplyAddress*, const char* msg, int size) {
     // offset within sc heap
     char* copy = static_cast<char*>(malloc(size));
     if (!copy)
@@ -473,7 +468,7 @@ static void onProcessorCreated(EMSCRIPTEN_WEBAUDIO_T context, EM_BOOL success, v
         return;
     }
 
-    gScWebAudioDriver = static_cast<SC_WebAudioDriver*>(gWorld->hw->mAudioDriver);
+    gScWebAudioDriver = static_cast<SC_WebAudioDriver*>(gWorld->hw->mAudioDriver.get());
 }
 
 /** @brief stage 2 - worklet has been created - use it to register the audio worklet processor */
