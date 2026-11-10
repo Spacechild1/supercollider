@@ -50,7 +50,7 @@ using DirName = SC_Filesystem::DirName;
 
 #include "SC_World.h"
 #include "SC_Wire.h"
-#include "ErrorMessage.hpp"
+#include "SC_APIVersionCheck.hpp"
 #include "SC_Filesystem.hpp" // SC_PLUGIN_EXT
 
 // The generic .so extension has been deprecated in SC 3.15 so developers can ship shared libraries
@@ -81,6 +81,8 @@ Unit* sc_ugen_def::construct(sc_synthdef::unit_spec_t const& unit_spec, sc_synth
     memset(chunk, 0, memory_requirement());
 
     Unit* unit = (Unit*)(std::uintptr_t(chunk + 63) & (~63)); // align on 64 byte boundary
+
+    unit->mStructSize = SC_API_STRUCT_SIZE(Unit, mBufLength);
 
     unit->mInBuf = allocator.alloc<float*>(unit_spec.input_specs.size());
     unit->mOutBuf = allocator.alloc<float*>(unit_spec.output_specs.size());
@@ -359,54 +361,39 @@ void sc_ugen_factory::load_plugin_folder(std::filesystem::path const& dir, bool 
 }
 #    endif // LINUX_PLUGIN_WORKAROUND
 
-static bool check_api_version(int (*api_version)(), std::string const& filename) {
-    using namespace scsynth;
-
-    if (api_version) {
-        int plugin_version = (*api_version)();
-        if (plugin_version == sc_api_version)
-            return true;
-        else
-            std::cout << ErrorMessage::apiVersionMismatch(filename, sc_api_version, plugin_version) << std::endl;
-    } else {
-        std::cout << ErrorMessage::apiVersionNotFound(filename) << std::endl;
-    }
-
-    return false;
-}
-
 #    ifdef DLOPEN
 void sc_ugen_factory::load_plugin(std::filesystem::path const& path) {
-    void* handle = dlopen(path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
-    if (handle == nullptr)
+    void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (handle == nullptr) {
+        std::cout << "ERROR: could not load plugin " << path << ": " << dlerror() << std::endl;
         return;
+    }
 
-    typedef int (*info_function)();
-
-    info_function api_version = reinterpret_cast<info_function>(dlsym(handle, "api_version"));
-
-    if (!check_api_version(api_version, path.string())) {
+    auto api_version = (void*)dlsym(handle, "api_version");
+    auto api_min_version = (void*)dlsym(handle, "api_min_version"); // added in SC 3.15
+    if (auto [success, error_message] = sc::checkAPIVersion(path.native(), api_version, api_min_version); !success) {
+        std::cout << error_message;
         dlclose(handle);
         return;
     }
 
-    info_function supernova_check = reinterpret_cast<info_function>(dlsym(handle, "server_type"));
+    auto supernova_check = reinterpret_cast<sc::PluginInfoFunction>(dlsym(handle, "server_type"));
     if (!supernova_check || (*supernova_check)() == sc_server_scsynth) {
         // silently ignore
         dlclose(handle);
         return;
     }
 
-    void* load_symbol = dlsym(handle, "load");
-    if (!load_symbol) {
-        std::cout << "Problem when loading plugin: \"load\" function undefined" << path << std::endl;
+    auto load_func = reinterpret_cast<LoadPlugInFunc>(dlsym(handle, "load"));
+    if (!load_func) {
+        std::cout << "ERROR: could not load plugin " << path << ": \"load\" function undefined" << std::endl;
         dlclose(handle);
         return;
     }
 
+    (*load_func)(&sc_interface, path.c_str());
+
     open_handles.push_back(handle);
-    LoadPlugInFunc load_func = reinterpret_cast<LoadPlugInFunc>(load_symbol);
-    (*load_func)(&sc_interface);
 
     /* don't close the handle */
     return;
@@ -414,10 +401,9 @@ void sc_ugen_factory::load_plugin(std::filesystem::path const& path) {
 
 void sc_ugen_factory::close_handles() {
     for (void* handle : open_handles) {
-        void* ptr = dlsym(handle, "unload");
-        if (ptr) {
-            UnLoadPlugInFunc unloadFunc = (UnLoadPlugInFunc)ptr;
-            (*unloadFunc)();
+        auto unload_func = reinterpret_cast<UnloadPlugInFunc>(dlsym(handle, "unload"));
+        if (unload_func) {
+            (*unload_func)();
         }
         dlclose(handle);
     }
@@ -429,7 +415,7 @@ void sc_ugen_factory::load_plugin(std::filesystem::path const& path) {
     // This allows plugins to place DLL dependencies in the same directory.
     SetDllDirectoryW(path.parent_path().c_str());
     // std::cout << "try open plugin: " << path << std::endl;
-    HINSTANCE hinstance = LoadLibraryW(path.wstring().c_str());
+    HINSTANCE hinstance = LoadLibraryW(path.c_str());
     // Reset DLL directory
     SetDllDirectoryW(nullptr);
 
@@ -439,57 +425,48 @@ void sc_ugen_factory::load_plugin(std::filesystem::path const& path) {
         FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                        nullptr, lastErr, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (wchar_t*)&s, 0, NULL);
 
-        std::cout << "Cannot open plugin: " << path << SC_Codecvt::utf16_to_utf8_str(s).c_str() << std::endl;
+        std::cout << "ERROR: could not load plugin " << path << ": " << SC_Codecvt::utf16_to_utf8_str(s) << std::endl;
         LocalFree(s);
         return;
     }
 
-    typedef int (*info_function)();
-    info_function api_version = reinterpret_cast<info_function>(GetProcAddress(hinstance, "api_version"));
+    const std::string filename_utf8 = SC_Codecvt::path_to_utf8_str(path);
 
-    if (!check_api_version(api_version, path.string())) {
+    auto api_version = (void*)GetProcAddress(hinstance, "api_version");
+    auto api_min_version = (void*)GetProcAddress(hinstance, "api_min_version"); // added in SC 3.15
+    if (auto [success, error_message] = sc::checkAPIVersion(filename_utf8, api_version, api_min_version); !success) {
+        std::cout << error_message;
         FreeLibrary(hinstance);
         return;
     }
 
-    typedef int (*info_function)();
-    info_function server_type = reinterpret_cast<info_function>(GetProcAddress(hinstance, "server_type"));
-    if (!server_type) {
+    auto server_type = reinterpret_cast<sc::PluginInfoFunction>(GetProcAddress(hinstance, "server_type"));
+    if (!server_type || (*server_type)() != sc_server_supernova) {
+        // silently ignore
         FreeLibrary(hinstance);
         return;
     }
 
-    if ((*server_type)() != sc_server_supernova) {
+    auto load_func = reinterpret_cast<LoadPlugInFunc>(GetProcAddress(hinstance, "load"));
+    if (!load_func) {
+        std::cout << "ERROR: could not load plugin " << path << ": \"load\" function undefined" << std::endl;
         FreeLibrary(hinstance);
         return;
     }
 
-    void* ptr = (void*)GetProcAddress(hinstance, "load");
-    if (!ptr) {
-        wchar_t* s;
-        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                       nullptr, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (wchar_t*)&s, 0, NULL);
+    (*load_func)(&sc_interface, filename_utf8.c_str());
 
-        std::cout << "*** ERROR: GetProcAddress err " << SC_Codecvt::utf16_to_utf8_str(s) << std::endl;
-        LocalFree(s);
-
-        FreeLibrary(hinstance);
-        return;
-    }
     open_handles.push_back(hinstance);
-    LoadPlugInFunc loadFunc = (LoadPlugInFunc)ptr;
-    (*loadFunc)(&sc_interface);
 
     return;
 }
 
 void sc_ugen_factory::close_handles() {
-    for (void* ptrhinstance : open_handles) {
-        HINSTANCE hinstance = (HINSTANCE)ptrhinstance;
-        void* ptr = (void*)GetProcAddress(hinstance, "unload");
-        if (ptr) {
-            UnLoadPlugInFunc unloadFunc = (UnLoadPlugInFunc)ptr;
-            (*unloadFunc)();
+    for (void* handle : open_handles) {
+        auto hinstance = static_cast<HINSTANCE>(handle);
+        auto unload_func = reinterpret_cast<UnloadPlugInFunc>(GetProcAddress(hinstance, "unload"));
+        if (unload_func) {
+            (*unload_func)();
         }
         FreeLibrary(hinstance);
     }

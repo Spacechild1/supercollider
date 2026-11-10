@@ -20,7 +20,6 @@
 
 
 #include "SC_Lib_Cintf.h"
-#include "SC_CoreAudio.h"
 #include "SC_UnitDef.h"
 #include "SC_BufGen.h"
 #include "SC_World.h"
@@ -28,8 +27,10 @@
 #include "SC_StringParser.h"
 #include "SC_InterfaceTable.h"
 #include "SC_Filesystem.hpp"
-#include "ErrorMessage.hpp" // for apiVersionMismatch, apiVersionMissing
+#include "SC_APIVersionCheck.hpp"
+
 #include <iostream>
+#include <vector>
 
 #ifdef STATIC_PLUGINS
 #    include "../plugins/SC_StaticPlugins.h"
@@ -153,7 +154,7 @@ void unloadUGenPlugins() {
         HINSTANCE hinstance = (HINSTANCE)ptrhinstance;
         void* ptr = (void*)GetProcAddress(hinstance, "unload");
         if (ptr) {
-            UnLoadPlugInFunc unloadFunc = (UnLoadPlugInFunc)ptr;
+            auto unloadFunc = reinterpret_cast<UnloadPlugInFunc>(ptr);
             (*unloadFunc)();
         }
         FreeLibrary(hinstance);
@@ -162,7 +163,7 @@ void unloadUGenPlugins() {
     for (void* handle : open_handles) {
         void* ptr = dlsym(handle, "unload");
         if (ptr) {
-            UnLoadPlugInFunc unloadFunc = (UnLoadPlugInFunc)ptr;
+            auto unloadFunc = reinterpret_cast<UnloadPlugInFunc>(ptr);
             (*unloadFunc)();
         }
         dlclose(handle);
@@ -253,116 +254,99 @@ void loadUGenPlugins(const char* ugensPluginPath) {
 #    endif // ifdef __APPLE__
 }
 
-typedef int (*InfoFunction)();
-
-bool checkAPIVersion(void* f, const char* filename) {
-    using namespace scsynth;
-
+bool checkServerVersion(void* f) {
     if (f) {
-        InfoFunction fn = (InfoFunction)f;
-        int pluginVersion = (*fn)();
-        if (pluginVersion == sc_api_version)
-            return true;
-        else
-            std::cout << ErrorMessage::apiVersionMismatch(filename, sc_api_version, pluginVersion) << std::endl;
-    } else {
-        std::cout << ErrorMessage::apiVersionNotFound(filename) << std::endl;
-    }
-
-    return false;
-}
-
-bool checkServerVersion(void* f, const char* filename) {
-    if (f) {
-        InfoFunction fn = (InfoFunction)f;
+        auto fn = reinterpret_cast<sc::PluginInfoFunction>(f);
         if ((*fn)() != sc_server_scsynth)
             return false;
     }
     return true;
 }
 
-static bool PlugIn_Load(const fs::path& filename) {
+static bool PlugIn_Load(const fs::path& path) {
 #    ifdef _WIN32
     // This allows plugins to place DLL dependencies in the same directory.
-    SetDllDirectoryW(filename.parent_path().c_str());
-    HINSTANCE hinstance = LoadLibraryW(filename.c_str());
+    SetDllDirectoryW(path.parent_path().c_str());
+    HINSTANCE hinstance = LoadLibraryW(path.c_str());
     // Reset DLL directory
     SetDllDirectoryW(nullptr);
-    // here, we have to use a utf-8 version of the string for printing
-    // because the native encoding on Windows is utf-16.
-    const std::string filename_utf8_str = SC_Codecvt::path_to_utf8_str(filename);
+
+    // We need a UTF-8 version of the file path for printing because the native encoding on Windows is UTF-16.
+    const std::string filename_utf8 = SC_Codecvt::path_to_utf8_str(path);
+
     if (!hinstance) {
         wchar_t* s = nullptr;
         DWORD lastErr = GetLastError();
         FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                        NULL, lastErr, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (wchar_t*)&s, 0, NULL);
-        scprintf("*** ERROR: LoadLibrary '%s' err '%s'\n", filename_utf8_str.c_str(),
+        scprintf("*** ERROR: could not load plugin '%s': %s\n", filename_utf8.c_str(),
                  SC_Codecvt::utf16_to_utf8_str(s).c_str());
         LocalFree(s);
         return false;
     }
 
-    void* apiVersionPtr = (void*)GetProcAddress(hinstance, "api_version");
-    if (!checkAPIVersion(apiVersionPtr, filename_utf8_str.c_str())) {
+    auto apiVersionPtr = (void*)GetProcAddress(hinstance, "api_version");
+    auto minApiVersionPtr = (void*)GetProcAddress(hinstance, "api_min_version"); // added in SC 3.15
+    if (auto [success, errorMessage] = sc::checkAPIVersion(filename_utf8, apiVersionPtr, minApiVersionPtr); !success) {
+        scprintf("%s", errorMessage.c_str());
         FreeLibrary(hinstance);
         return false;
     }
 
     void* serverCheckPtr = (void*)GetProcAddress(hinstance, "server_type");
-    if (!checkServerVersion(serverCheckPtr, filename_utf8_str.c_str())) {
+    if (!checkServerVersion(serverCheckPtr)) {
         FreeLibrary(hinstance);
         return false;
     }
 
     void* ptr = (void*)GetProcAddress(hinstance, "load");
     if (!ptr) {
-        wchar_t* s;
-        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                       NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (wchar_t*)&s, 0, NULL);
-        scprintf("*** ERROR: GetProcAddress err '%s'\n", SC_Codecvt::utf16_to_utf8_str(s).c_str());
-        LocalFree(s);
-
+        scprintf("ERROR: could not load plugin '%s': \"load\" function undefined\n", filename_utf8.c_str());
         FreeLibrary(hinstance);
         return false;
     }
 
-    LoadPlugInFunc loadFunc = (LoadPlugInFunc)ptr;
-    (*loadFunc)(&gInterfaceTable);
+    auto loadFunc = reinterpret_cast<LoadPlugInFunc>(ptr);
+    (*loadFunc)(&gInterfaceTable, filename_utf8.c_str());
 
     open_handles.push_back(hinstance);
+
     return true;
 
 #    else // (ifndef _WIN32)
-    void* handle = dlopen(filename.c_str(), RTLD_NOW);
+    void* handle = dlopen(path.c_str(), RTLD_NOW);
 
     if (!handle) {
-        scprintf("*** ERROR: dlopen '%s' err '%s'\n", filename.c_str(), dlerror());
+        scprintf("*** ERROR: could not load plugin '%s': %s\n", path.c_str(), dlerror());
         return false;
     }
 
     void* apiVersionPtr = (void*)dlsym(handle, "api_version");
-    if (!checkAPIVersion(apiVersionPtr, filename.c_str())) {
+    void* minApiVersionPtr = (void*)dlsym(handle, "api_min_version"); // added in SC 3.15
+    if (auto [success, errorMessage] = sc::checkAPIVersion(path.native(), apiVersionPtr, minApiVersionPtr); !success) {
+        scprintf("%s", errorMessage.c_str());
         dlclose(handle);
         return false;
     }
 
     void* serverCheckPtr = (void*)dlsym(handle, "server_type");
-    if (!checkServerVersion(serverCheckPtr, filename.c_str())) {
+    if (!checkServerVersion(serverCheckPtr)) {
         dlclose(handle);
         return false;
     }
 
     void* ptr = dlsym(handle, "load");
     if (!ptr) {
-        scprintf("*** ERROR: dlsym load err '%s'\n", dlerror());
+        scprintf("ERROR: could not load plugin '%s': \"load\" function undefined\n", path.c_str());
         dlclose(handle);
         return false;
     }
 
-    LoadPlugInFunc loadFunc = (LoadPlugInFunc)ptr;
-    (*loadFunc)(&gInterfaceTable);
+    auto loadFunc = reinterpret_cast<LoadPlugInFunc>(ptr);
+    (*loadFunc)(&gInterfaceTable, path.c_str());
 
     open_handles.push_back(handle);
+
     return true;
 
 #    endif // _WIN32
