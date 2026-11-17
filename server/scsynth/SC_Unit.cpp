@@ -29,8 +29,6 @@
 #include "SC_Prototypes.h"
 #include "sc_linear_allocator.hpp"
 
-void Unit_ChooseMulAddFunc(Unit* unit);
-
 Unit* Unit_New(World* inWorld, Graph* graph, UnitSpec* inUnitSpec, sc::linear_allocator& alloc) {
     UnitDef* def = inUnitSpec->mUnitDef;
 
