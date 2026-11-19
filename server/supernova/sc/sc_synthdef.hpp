@@ -142,8 +142,10 @@ private:
 
     bool reblock_or_resample = false;
 
+    uint32_t local_sndbuf_count;
+
     graph_t graph;
-    unsigned int buffer_count;
+    uint32_t buffer_count;
     calc_units_t calc_unit_indices; /**< indices of the units, that need to be calculated */
     std::size_t memory_requirement_;
 };
